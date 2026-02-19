@@ -10,11 +10,15 @@ import {
   TextInput,
   Alert,
   SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc, collection, query, where, onSnapshot, getDocs, updateDoc, arrayUnion, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase.config';
 import { AuthContext } from '../context/AuthContext';
+import * as Contacts from 'expo-contacts';
 
 export default function GroupScreen({ route, navigation }) {
   const { groupId } = route.params;
@@ -27,8 +31,13 @@ export default function GroupScreen({ route, navigation }) {
   const [showAddMemberModal, setShowAddMemberModal] = useState(false);
   const [memberInput, setMemberInput] = useState('');
   const [addingMember, setAddingMember] = useState(false);
+  const [searchingMember, setSearchingMember] = useState(false);
+  const [foundUser, setFoundUser] = useState(null);          // preview before confirming add
   const [membersData, setMembersData] = useState([]);
   const [pendingSettlements, setPendingSettlements] = useState([]);
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [selectedMemberForRole, setSelectedMemberForRole] = useState(null);
+  const [contactSuggestions, setContactSuggestions] = useState([]);
 
   // Helper: convert Firestore timestamp / Date.now() millis / ISO string to JS Date
   const toDate = (ts) => {
@@ -163,36 +172,94 @@ export default function GroupScreen({ route, navigation }) {
     );
   };
 
-  /* ---------- add member ---------- */
-  const handleAddMember = async () => {
+  /* ---------- ROLES ---------- */
+  const ROLES = [
+    { key: 'admin',     label: 'Admin',     icon: 'shield',            color: '#8B5CF6', desc: 'Full control — add/remove members, delete group' },
+    { key: 'treasurer', label: 'Treasurer', icon: 'cash',              color: '#10B981', desc: 'Can settle up and manage expenses' },
+    { key: 'member',    label: 'Member',    icon: 'person',            color: '#6366F1', desc: 'Can add expenses and view balances' },
+    { key: 'viewer',    label: 'Viewer',    icon: 'eye',               color: '#F59E0B', desc: 'Read-only — can only view the group' },
+  ];
+
+  const getMemberRole = (uid) => {
+    if (group?.createdBy === uid) return 'admin';
+    return group?.roles?.[uid] || 'member';
+  };
+
+  const canManageRoles = () => getMemberRole(user.uid) === 'admin';
+  const canAddMembers = () => ['admin', 'treasurer'].includes(getMemberRole(user.uid));
+  const canAddExpenses = () => ['admin', 'treasurer', 'member'].includes(getMemberRole(user.uid));
+
+  const handleSetRole = async (uid, role) => {
+    try {
+      await updateDoc(doc(db, 'groups', groupId), {
+        [`roles.${uid}`]: role,
+      });
+      const updated = await getDoc(doc(db, 'groups', groupId));
+      setGroup({ id: updated.id, ...updated.data() });
+      setShowRoleModal(false);
+      setSelectedMemberForRole(null);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  /* ---------- CONTACTS search ---------- */
+  const handlePickFromContacts = async () => {
+    const { status } = await Contacts.requestPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Allow contacts access in Settings to use this feature.');
+      return;
+    }
+    const { data } = await Contacts.getContactsAsync({
+      fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails],
+    });
+    // Flatten to list with name + phone/email
+    const suggestions = [];
+    data.forEach((c) => {
+      (c.phoneNumbers || []).forEach((p) => {
+        const normalized = p.number.replace(/\s|-|\(|\)/g, '');
+        suggestions.push({ name: c.name, value: normalized, type: 'phone' });
+      });
+      (c.emails || []).forEach((e) => {
+        suggestions.push({ name: c.name, value: e.email.toLowerCase(), type: 'email' });
+      });
+    });
+    setContactSuggestions(suggestions.slice(0, 50));  // show first 50
+  };
+
+  /* ---------- SEARCH user (preview before add) ---------- */
+  const handleSearchMember = async () => {
     const input = memberInput.trim().toLowerCase();
     if (!input) { Alert.alert('Error', 'Enter an email or phone number'); return; }
-
-    setAddingMember(true);
+    setFoundUser(null);
+    setSearchingMember(true);
     try {
       const field = input.includes('@') ? 'email' : 'phone';
-      console.log('🔍 Searching for user:', { field, value: input });
-      
       const snap = await getDocs(query(collection(db, 'users'), where(field, '==', input)));
-      console.log('📊 Query results:', snap.size, 'documents found');
-
       if (snap.empty) {
-        console.warn('❌ No user found in Firestore with', field, '=', input);
-        Alert.alert(
-          'Not Found',
-          `No account found with ${field} "${input}".\n\nMake sure:\n1. The user has signed up for Evenly\n2. The email is spelled correctly\n3. The user used this exact email to sign up`
-        );
-        setAddingMember(false);
+        Alert.alert('Not Found', `No Evenly account found with that ${field}.\n\nMake sure they have signed up first.`);
+        setSearchingMember(false);
         return;
       }
+      const d = snap.docs[0];
+      setFoundUser({ id: d.id, ...d.data() });
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally { setSearchingMember(false); }
+  };
 
-      const uid = snap.docs[0].id;
-      if (group.members.includes(uid)) { Alert.alert('Already a member'); setAddingMember(false); return; }
-
+  /* ---------- CONFIRM add after preview ---------- */
+  const handleConfirmAddMember = async () => {
+    if (!foundUser) return;
+    if (group.members.includes(foundUser.id)) {
+      Alert.alert('Already a member');
+      setFoundUser(null);
+      return;
+    }
+    setAddingMember(true);
+    try {
       const ref = doc(db, 'groups', groupId);
-      await updateDoc(ref, { members: arrayUnion(uid) });
-
-      // refresh
+      await updateDoc(ref, { members: arrayUnion(foundUser.id) });
       const updated = await getDoc(ref);
       const g = { id: updated.id, ...updated.data() };
       setGroup(g);
@@ -203,9 +270,11 @@ export default function GroupScreen({ route, navigation }) {
         })
       );
       setMembersData(mems);
-      Alert.alert('Done', 'Member added!');
+      Alert.alert('Done', `${foundUser.name || foundUser.email} added to the group!`);
       setShowAddMemberModal(false);
       setMemberInput('');
+      setFoundUser(null);
+      setContactSuggestions([]);
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally { setAddingMember(false); }
@@ -382,16 +451,34 @@ export default function GroupScreen({ route, navigation }) {
         {/* Members */}
         <View style={s.section}>
           <Text style={s.sectionTitle}>Members ({membersData.length})</Text>
-          {membersData.map((m) => (
-            <View key={m.id} style={s.memberRow}>
-              <View style={s.avatar}><Text style={s.avatarTxt}>{(m.name || m.email || '?')[0].toUpperCase()}</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.memberName}>{m.name || 'User'}</Text>
-                <Text style={s.memberEmail}>{m.email}</Text>
+          {membersData.map((m) => {
+            const role = getMemberRole(m.id);
+            const roleInfo = ROLES.find(r => r.key === role) || ROLES[2];
+            return (
+              <View key={m.id} style={s.memberRow}>
+                <View style={s.avatar}><Text style={s.avatarTxt}>{(m.name || m.email || '?')[0].toUpperCase()}</Text></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.memberName}>{m.name || 'User'}</Text>
+                  <Text style={s.memberEmail}>{m.email}</Text>
+                </View>
+                {/* Role badge */}
+                <View style={[s.roleBadge, { backgroundColor: roleInfo.color + '20', borderColor: roleInfo.color }]}>
+                  <Ionicons name={roleInfo.icon} size={12} color={roleInfo.color} style={{ marginRight: 3 }} />
+                  <Text style={[s.roleBadgeTxt, { color: roleInfo.color }]}>{roleInfo.label}</Text>
+                </View>
+                {m.id === user.uid && <View style={[s.youBadge, { marginLeft: 6 }]}><Text style={s.youBadgeTxt}>You</Text></View>}
+                {/* Admin can change roles of others */}
+                {canManageRoles() && m.id !== user.uid && (
+                  <TouchableOpacity
+                    style={s.roleEditBtn}
+                    onPress={() => { setSelectedMemberForRole(m); setShowRoleModal(true); }}
+                  >
+                    <Ionicons name="chevron-down" size={16} color="#9CA3AF" />
+                  </TouchableOpacity>
+                )}
               </View>
-              {m.id === user.uid && <View style={s.youBadge}><Text style={s.youBadgeTxt}>You</Text></View>}
-            </View>
-          ))}
+            );
+          })}
         </View>
 
         {/* Expenses */}
@@ -438,37 +525,175 @@ export default function GroupScreen({ route, navigation }) {
       </ScrollView>
 
       {/* ─── Add Member Modal ─── */}
-      <Modal visible={showAddMemberModal} transparent animationType="slide" onRequestClose={() => setShowAddMemberModal(false)}>
-        <View style={s.modalOverlay}>
+      <Modal visible={showAddMemberModal} transparent animationType="slide" onRequestClose={() => { setShowAddMemberModal(false); setFoundUser(null); setContactSuggestions([]); }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <TouchableOpacity
+            style={{ flex: 1 }}
+            activeOpacity={1}
+            onPress={() => { setShowAddMemberModal(false); setFoundUser(null); setContactSuggestions([]); }}
+          />
           <View style={s.modalSheet}>
             <View style={s.modalHead}>
               <Text style={s.modalTitle}>Add Member</Text>
-              <TouchableOpacity onPress={() => setShowAddMemberModal(false)}>
+              <TouchableOpacity onPress={() => { setShowAddMemberModal(false); setFoundUser(null); setContactSuggestions([]); }}>
                 <Ionicons name="close" size={26} color="#6B7280" />
               </TouchableOpacity>
             </View>
-            <Text style={s.modalSub}>Enter the email or phone number of the person you want to add</Text>
-            <TextInput
-              style={s.modalInput}
-              placeholder="Email or phone number"
-              value={memberInput}
-              onChangeText={setMemberInput}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoFocus
-            />
-            <TouchableOpacity 
-              style={[s.modalBtn, addingMember && { opacity: 0.5 }]} 
-              onPress={handleAddMember} 
-              disabled={addingMember}
-            >
-              {addingMember
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={s.modalBtnTxt}>Add Member</Text>}
+
+            {/* Search input row */}
+            <View style={s.searchRow}>
+              <TextInput
+                style={[s.modalInput, { flex: 1, marginBottom: 0 }]}
+                placeholder="Email or phone number"
+                value={memberInput}
+                onChangeText={(t) => {
+                  setMemberInput(t);
+                  setFoundUser(null);
+                  // filter contact suggestions as user types
+                  if (t.length >= 2) {
+                    const q = t.toLowerCase();
+                    const all = contactSuggestions.length > 0 ? contactSuggestions : [];
+                    setContactSuggestions(prev => prev.filter(c =>
+                      c.name?.toLowerCase().includes(q) || c.value?.includes(q)
+                    ));
+                  }
+                }}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                returnKeyType="search"
+                onSubmitEditing={handleSearchMember}
+              />
+              <TouchableOpacity style={s.searchBtn} onPress={handleSearchMember} disabled={searchingMember}>
+                {searchingMember
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Ionicons name="search" size={20} color="#fff" />}
+              </TouchableOpacity>
+            </View>
+
+            {/* Contacts button */}
+            <TouchableOpacity style={s.contactsBtn} onPress={handlePickFromContacts}>
+              <Ionicons name="people" size={18} color="#6366F1" style={{ marginRight: 8 }} />
+              <Text style={s.contactsBtnTxt}>Search from Contacts</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={{ padding: 14, alignItems: 'center' }} onPress={() => setShowAddMemberModal(false)}>
-              <Text style={{ color: '#6B7280', fontSize: 16 }}>Cancel</Text>
-            </TouchableOpacity>
+
+            {/* Contact suggestions list */}
+            {contactSuggestions.length > 0 && !foundUser && (
+              <ScrollView style={{ maxHeight: 160 }} keyboardShouldPersistTaps="handled">
+                {contactSuggestions.map((c, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={s.suggRow}
+                    onPress={() => {
+                      setMemberInput(c.value);
+                      setContactSuggestions([]);
+                      setFoundUser(null);
+                    }}
+                  >
+                    <View style={s.suggAvatar}>
+                      <Text style={s.suggAvatarTxt}>{(c.name || '?')[0].toUpperCase()}</Text>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 14, color: '#1F2937', fontWeight: '600' }}>{c.name}</Text>
+                      <Text style={{ fontSize: 12, color: '#6B7280' }}>{c.value}</Text>
+                    </View>
+                    <Ionicons name="arrow-forward-outline" size={16} color="#9CA3AF" style={{ marginLeft: 'auto' }} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* ── User preview card ── */}
+            {foundUser && (
+              <View style={s.previewCard}>
+                <View style={s.previewHead}>
+                  <Ionicons name="checkmark-circle" size={20} color="#10B981" style={{ marginRight: 6 }} />
+                  <Text style={s.previewHeadTxt}>User found — verify before adding</Text>
+                </View>
+                <View style={s.previewBody}>
+                  <View style={s.previewAvatar}>
+                    <Text style={s.previewAvatarTxt}>{(foundUser.name || foundUser.email || '?')[0].toUpperCase()}</Text>
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={s.previewName}>{foundUser.name || 'No name set'}</Text>
+                    <Text style={s.previewEmail}>{foundUser.email}</Text>
+                    {foundUser.phone && <Text style={s.previewPhone}>📱 {foundUser.phone}</Text>}
+                  </View>
+                </View>
+                <View style={s.previewActions}>
+                  <TouchableOpacity
+                    style={[s.modalBtn, { flex: 1, flexDirection: 'row', marginBottom: 0 }]}
+                    onPress={handleConfirmAddMember}
+                    disabled={addingMember}
+                  >
+                    {addingMember
+                      ? <ActivityIndicator color="#fff" />
+                      : <>
+                          <Ionicons name="person-add" size={18} color="#fff" style={{ marginRight: 6 }} />
+                          <Text style={s.modalBtnTxt}>Add to Group</Text>
+                        </>}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={s.previewReject}
+                    onPress={() => { setFoundUser(null); setMemberInput(''); }}
+                  >
+                    <Ionicons name="close" size={20} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {!foundUser && (
+              <Text style={{ fontSize: 12, color: '#9CA3AF', marginTop: 10, textAlign: 'center' }}>
+                Enter their email or phone, tap 🔍, verify the person, then confirm to add.
+              </Text>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ─── Role Assignment Modal ─── */}
+      <Modal visible={showRoleModal} transparent animationType="fade" onRequestClose={() => setShowRoleModal(false)}>
+        <View style={s.roleOverlay}>
+          <View style={s.roleSheet}>
+            <View style={s.modalHead}>
+              <View>
+                <Text style={s.modalTitle}>Assign Role</Text>
+                {selectedMemberForRole && (
+                  <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 2 }}>
+                    {selectedMemberForRole.name || selectedMemberForRole.email}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setShowRoleModal(false)}>
+                <Ionicons name="close" size={26} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
+              Choose the role for this member. Roles control what actions they can perform in the group.
+            </Text>
+            {ROLES.map((r) => {
+              const current = selectedMemberForRole ? getMemberRole(selectedMemberForRole.id) : null;
+              const isActive = current === r.key;
+              return (
+                <TouchableOpacity
+                  key={r.key}
+                  style={[s.roleOption, isActive && { borderColor: r.color, backgroundColor: r.color + '10' }]}
+                  onPress={() => handleSetRole(selectedMemberForRole.id, r.key)}
+                >
+                  <View style={[s.roleOptionIcon, { backgroundColor: r.color + '20' }]}>
+                    <Ionicons name={r.icon} size={20} color={r.color} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[s.roleOptionLabel, isActive && { color: r.color }]}>{r.label}</Text>
+                    <Text style={s.roleOptionDesc}>{r.desc}</Text>
+                  </View>
+                  {isActive && <Ionicons name="checkmark-circle" size={22} color={r.color} />}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
       </Modal>
@@ -566,4 +791,43 @@ const s = StyleSheet.create({
   modalInput: { backgroundColor: '#F3F4F6', padding: 14, borderRadius: 10, fontSize: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E5E7EB' },
   modalBtn: { backgroundColor: '#6366F1', padding: 16, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   modalBtnTxt: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  /* ── search row ── */
+  searchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  searchBtn: { backgroundColor: '#6366F1', padding: 14, borderRadius: 10, marginLeft: 8, alignItems: 'center', justifyContent: 'center' },
+
+  /* ── contacts button ── */
+  contactsBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 10, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#C7D2FE' },
+  contactsBtnTxt: { color: '#6366F1', fontWeight: '600', fontSize: 14 },
+
+  /* ── contact suggestions ── */
+  suggRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  suggAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#6366F1', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  suggAvatarTxt: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
+
+  /* ── user preview card ── */
+  previewCard: { backgroundColor: '#F0FDF4', borderRadius: 14, padding: 14, marginTop: 12, borderWidth: 1.5, borderColor: '#10B981' },
+  previewHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  previewHeadTxt: { fontSize: 13, fontWeight: '700', color: '#065F46' },
+  previewBody: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  previewAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#6366F1', justifyContent: 'center', alignItems: 'center' },
+  previewAvatarTxt: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
+  previewName: { fontSize: 16, fontWeight: 'bold', color: '#1F2937' },
+  previewEmail: { fontSize: 13, color: '#6B7280' },
+  previewPhone: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  previewActions: { flexDirection: 'row', alignItems: 'center' },
+  previewReject: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#FEE2E2', alignItems: 'center', justifyContent: 'center', marginLeft: 10 },
+
+  /* ── role badge on member row ── */
+  roleBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8, borderWidth: 1, marginLeft: 6 },
+  roleBadgeTxt: { fontSize: 11, fontWeight: '700' },
+  roleEditBtn: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
+
+  /* ── role assignment modal ── */
+  roleOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 },
+  roleSheet: { backgroundColor: '#fff', borderRadius: 20, padding: 24 },
+  roleOption: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB', marginBottom: 10 },
+  roleOptionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  roleOptionLabel: { fontSize: 15, fontWeight: '700', color: '#1F2937' },
+  roleOptionDesc: { fontSize: 12, color: '#6B7280', marginTop: 2 },
 });

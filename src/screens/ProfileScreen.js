@@ -44,11 +44,13 @@ export default function ProfileScreen({ navigation }) {
   };
 
   useEffect(() => {
+    if (!user) return;
     loadUserProfile();
     calculateStats();
   }, [user]);
 
   const loadUserProfile = async () => {
+    if (!user) return;
     try {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
@@ -60,6 +62,7 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const calculateStats = async () => {
+    if (!user) return;
     try {
       // Get all groups user is in
       const groupsSnap = await getDocs(

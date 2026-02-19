@@ -2,7 +2,9 @@
   "expo": {
     "name": "evenly",
     "slug": "evenly",
+    "scheme": "evenly",
     "version": "1.0.0",
+     "owner": "akshay643",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,17 +15,28 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.evenly.app"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.evenly.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7bf3bd2b-f6d4-4f6b-af45-d9552efc6a35"
+      }
     }
   }
 }
