@@ -8,6 +8,8 @@ import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
 import AnalyticsScreen from '../screens/AnalyticsScreen';
 import PremiumScreen from '../screens/PremiumScreen';
 import { SafeAreaView } from "react-native-safe-area-context";
+import FriendsScreen from '../screens/FriendsScreen';
+
 // Screens
 import AuthScreen from '../screens/AuthScreen';
 import DashboardScreen from '../screens/DashboardScreen';
@@ -81,6 +83,11 @@ export default function AppNavigator() {
       {user ? (
         <>
           <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen
+  name="Friends"
+  component={FriendsScreen}
+  options={{ headerShown: false }}
+/>
           <Stack.Screen name="Group" component={GroupScreen} />
           <Stack.Screen name="AddExpense" component={AddExpenseScreen} />
           <Stack.Screen name="EditExpense" component={EditExpenseScreen} />

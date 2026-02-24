@@ -114,7 +114,7 @@ const { checkLimit } = usePremiumLimit();
     // if (!checkLimit('maxGroups', groups.length)) return;
   const createdByMe = groups.filter(g => g.createdBy === user.uid).length;
   if (!checkLimit('maxGroups', createdByMe)) return;
-  
+
     if (!newGroupName.trim()) {
       Alert.alert('Error', 'Please enter a group name');
       return;
@@ -312,6 +312,7 @@ const { checkLimit } = usePremiumLimit();
               </TouchableOpacity>
             </View>
           </View>
+          
         </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>

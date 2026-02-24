@@ -513,7 +513,26 @@ export default function ProfileScreen({ navigation }) {
             )}
           </View>
         </View>
-
+<View style={styles.section}>
+  <TouchableOpacity
+    style={styles.friendsCard}
+    onPress={() => navigation.navigate('Friends')}
+    activeOpacity={0.7}
+  >
+    <View style={styles.friendsCardLeft}>
+      <View style={styles.friendsIconContainer}>
+        <Ionicons name="people" size={28} color="#6366F1" />
+      </View>
+      <View style={{ flex: 1, marginLeft: 14 }}>
+        <Text style={styles.friendsCardTitle}>My Friends</Text>
+        <Text style={styles.friendsCardSubtitle}>
+          Manage your friends list for quick group additions
+        </Text>
+      </View>
+    </View>
+    <Ionicons name="chevron-forward" size={22} color="#9CA3AF" />
+  </TouchableOpacity>
+</View>
         {/* Insights & Tips */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>💡 Smart Insights</Text>
@@ -860,6 +879,45 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  friendsCard: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  backgroundColor: '#fff',
+  borderRadius: 14,
+  padding: 18,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.06,
+  shadowRadius: 4,
+  elevation: 2,
+  borderWidth: 1.5,
+  borderColor: '#C7D2FE',
+},
+friendsCardLeft: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  flex: 1,
+},
+friendsIconContainer: {
+  width: 52,
+  height: 52,
+  borderRadius: 26,
+  backgroundColor: '#EEF2FF',
+  justifyContent: 'center',
+  alignItems: 'center',
+},
+friendsCardTitle: {
+  fontSize: 17,
+  fontWeight: '700',
+  color: '#1F2937',
+  marginBottom: 4,
+},
+friendsCardSubtitle: {
+  fontSize: 13,
+  color: '#6B7280',
+  lineHeight: 18,
+},
   balanceRow: {
     flexDirection: "row",
     justifyContent: "space-around",
