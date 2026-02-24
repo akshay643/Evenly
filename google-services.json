@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "240071770069",
+    "project_id": "evenly-6ff36",
+    "storage_bucket": "evenly-6ff36.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:240071770069:android:418bb52e53f059c62cc75c",
+        "android_client_info": {
+          "package_name": "com.evenly.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "240071770069-6slejsht0h266q1prjui92l1sd49cf1l.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.evenly.app",
+            "certificate_hash": "ac2879ca930639a8718da93cc975a1f7c46df5d4"
+          }
+        },
+        {
+          "client_id": "240071770069-fsr0agatmehmuao4gjm9tgtintv0bj80.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBPULJovZ9h5EoUfm5fmh49ljSsqNil5Ig"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "240071770069-fsr0agatmehmuao4gjm9tgtintv0bj80.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "240071770069-1u99bkld8873k8m0u5qam0hq41l9bro3.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.evenly.app"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

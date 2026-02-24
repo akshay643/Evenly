@@ -1,55 +1,59 @@
-/**
- * Splitwise-style optimized settlement engine
- *
- * Logic (your example):
- *
- *   Group Trip: Alice, Bob, Charlie
- *   Expenses:
- *     1. Alice paid ₹100 for hotel  (split 3)
- *     2. Bob   paid ₹200 for food   (split 3)
- *     3. Charlie paid ₹300 for transport (split 3)
- *
- *   Total: ₹600   Per-person share: ₹200
- *
- *   Net balances (paid – share):
- *     Alice:   100 – 200 = –100  (owes ₹100)
- *     Bob:     200 – 200 =    0  (settled)
- *     Charlie: 300 – 200 = +100  (gets back ₹100)
- *
- *   Optimised result → Alice pays Charlie ₹100  ✅
- */
+// src/utils/minimizeTransactions.js
 
 /**
  * Calculate net balance for every member.
  *
- * Positive = the group owes them money (they overpaid).
- * Negative = they owe the group money  (they underpaid).
- *
- * @param {Array} expenses    – [{paidBy, amount, splitBetween}, …]
- * @param {Array} settlements – [{from, to, amount}, …]  (already confirmed)
- * @param {Array} memberIds   – ['uid1', 'uid2', …]
- * @returns {Object} { [uid]: netBalance }
+ * NOW HANDLES:
+ *   - Equal splits (splitBetween array, no splitAmounts)
+ *   - Unequal splits (splitAmounts: { uid: amount })
+ *   - Percentage splits (pre-calculated into splitAmounts)
+ *   - Share-based splits (pre-calculated into splitAmounts)
  */
 export function calcNetBalances(expenses, settlements, memberIds) {
   const net = {};
-  memberIds.forEach((id) => { net[id] = 0; });
-
-  // Each expense: payer gets +amount, every participant gets –share
-  expenses.forEach(({ paidBy, amount, splitBetween }) => {
-    if (!paidBy || !amount || !splitBetween || splitBetween.length === 0) return;
-    const share = amount / splitBetween.length;
-
-    net[paidBy] = (net[paidBy] || 0) + amount;
-    splitBetween.forEach((mid) => {
-      net[mid] = (net[mid] || 0) - share;
-    });
+  memberIds.forEach((id) => {
+    net[id] = 0;
   });
+
+  expenses.forEach(
+    ({ paidBy, amount, splitBetween, splitAmounts, splitMethod }) => {
+      if (!paidBy || !amount || !splitBetween || splitBetween.length === 0)
+        return;
+
+      const validSplit = splitBetween.filter((mid) => memberIds.includes(mid));
+      if (validSplit.length === 0) return;
+
+      // Credit the payer
+      if (net[paidBy] !== undefined) {
+        net[paidBy] += amount;
+      }
+
+      // Debit each participant their share
+      if (splitAmounts && splitMethod && splitMethod !== "equal") {
+        // ── Unequal split: use stored per-person amounts ──
+        validSplit.forEach((mid) => {
+          if (net[mid] !== undefined) {
+            const personAmount = splitAmounts[mid] || 0;
+            net[mid] -= personAmount;
+          }
+        });
+      } else {
+        // ── Equal split (default) ──
+        const share = amount / validSplit.length;
+        validSplit.forEach((mid) => {
+          if (net[mid] !== undefined) {
+            net[mid] -= share;
+          }
+        });
+      }
+    },
+  );
 
   // Settlements reduce the debtor's debt and the creditor's credit
   settlements.forEach(({ from, to, amount }) => {
     if (!from || !to || !amount) return;
-    net[from] = (net[from] || 0) + amount;   // debtor paid → balance goes up
-    net[to]   = (net[to]   || 0) - amount;   // creditor received → balance goes down
+    if (net[from] !== undefined) net[from] += amount;
+    if (net[to] !== undefined) net[to] -= amount;
   });
 
   return net;
@@ -59,29 +63,21 @@ export function calcNetBalances(expenses, settlements, memberIds) {
  * Greedy algorithm to minimise the number of transactions.
  * Works exactly like Splitwise's "simplify debts".
  *
- * 1. Compute net balance for each person.
- * 2. Separate into debtors (net < 0) and creditors (net > 0).
- * 3. Sort both descending by absolute amount.
- * 4. Match largest debtor → largest creditor, settle the minimum
- *    of the two, advance the one that hits zero.
- *
- * @returns {Array} [{ from, to, amount }, …]  minimal transactions
+ * Handles both equal and unequal splits correctly.
  */
 export function minimizeTransactions(expenses, settlements, memberIds) {
   const net = calcNetBalances(expenses, settlements, memberIds);
 
   const EPSILON = 0.01;
 
-  // Separate into debtors and creditors
-  const debtors   = []; // owe money  (net < 0)
-  const creditors = []; // owed money (net > 0)
+  const debtors = [];
+  const creditors = [];
 
   Object.entries(net).forEach(([id, bal]) => {
-    if (bal < -EPSILON)  debtors.push({ id, amount: Math.abs(bal) });
-    if (bal >  EPSILON)  creditors.push({ id, amount: bal });
+    if (bal < -EPSILON) debtors.push({ id, amount: Math.abs(bal) });
+    if (bal > EPSILON) creditors.push({ id, amount: bal });
   });
 
-  // Sort descending so largest amounts settle first → fewer transactions
   debtors.sort((a, b) => b.amount - a.amount);
   creditors.sort((a, b) => b.amount - a.amount);
 
@@ -97,7 +93,7 @@ export function minimizeTransactions(expenses, settlements, memberIds) {
     if (settle > EPSILON) {
       transactions.push({
         from: d.id,
-        to:   c.id,
+        to: c.id,
         amount: parseFloat(settle.toFixed(2)),
       });
     }

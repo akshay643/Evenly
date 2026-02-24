@@ -12,13 +12,21 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
 import { collection, query, where, onSnapshot, addDoc, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase.config';
+import ReminderBanner from '../components/ReminderBanner';
+import useNotifications from '../hooks/useNotifications';
+import { usePremiumLimit } from '../components/PremiumLimitCheck';
 
 export default function DashboardScreen({ navigation }) {
+    useNotifications();  // ← Add this line at the top of the component
+const { checkLimit } = usePremiumLimit();
+
   const { user } = useContext(AuthContext);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +111,10 @@ export default function DashboardScreen({ navigation }) {
   }, [user]);
 
   const handleCreateGroup = async () => {
+    // if (!checkLimit('maxGroups', groups.length)) return;
+  const createdByMe = groups.filter(g => g.createdBy === user.uid).length;
+  if (!checkLimit('maxGroups', createdByMe)) return;
+  
     if (!newGroupName.trim()) {
       Alert.alert('Error', 'Please enter a group name');
       return;
@@ -150,7 +162,7 @@ export default function DashboardScreen({ navigation }) {
   );
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Evenly</Text>
@@ -161,7 +173,9 @@ export default function DashboardScreen({ navigation }) {
           <Ionicons name="add" size={24} color="white" />
         </TouchableOpacity>
       </View>
-
+      <ReminderBanner
+        onNavigateToGroup={(groupId) => navigation.navigate('SettleUp', { groupId })}
+      />
       {/* Pending Settlement Banner */}
       {pendingCount > 0 && (
         <TouchableOpacity style={styles.pendingBanner}>
@@ -300,7 +314,7 @@ export default function DashboardScreen({ navigation }) {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }
 

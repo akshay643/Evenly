@@ -4,7 +4,7 @@
     "slug": "evenly",
     "scheme": "evenly",
     "version": "1.0.0",
-     "owner": "akshay643",
+    "owner": "akshay643",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +16,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.evenly.app"
+      "bundleIdentifier": "com.evenly.app",
+      "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
       "adaptiveIcon": {
@@ -24,19 +25,34 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.evenly.app"
+      "package": "com.evenly.app",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-dev-client",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#ffffff",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "@react-native-google-signin/google-signin"
+      ]
     ],
     "extra": {
       "eas": {
         "projectId": "7bf3bd2b-f6d4-4f6b-af45-d9552efc6a35"
       }
+    },
+    "runtimeVersion": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/7bf3bd2b-f6d4-4f6b-af45-d9552efc6a35"
     }
   }
 }

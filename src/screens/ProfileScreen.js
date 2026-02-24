@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect } from 'react';
+import React, { useContext, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,18 +8,35 @@ import {
   Image,
   ActivityIndicator,
   Alert,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import { signOut } from 'firebase/auth';
-import { auth, db } from '../../firebase.config';
-import { AuthContext } from '../context/AuthContext';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
-
+  TextInput,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { signOut } from "firebase/auth";
+import { auth, db } from "../../firebase.config";
+import { AuthContext } from "../context/AuthContext";
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+} from "firebase/firestore";
+import { PremiumContext } from "../context/PremiumContext";
+import { SafeAreaView } from "react-native-safe-area-context";
 export default function ProfileScreen({ navigation }) {
   const { user } = useContext(AuthContext);
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { currentPlan, isFree, isPro, isPremium } = useContext(PremiumContext);
+
+  // Initialize with empty strings, update via useEffect
+  const [upiId, setUpiId] = useState("");
+  const [bankAccount, setBankAccount] = useState("");
+  const [bankIfsc, setBankIfsc] = useState("");
+
   const [stats, setStats] = useState({
     totalGroups: 0,
     totalExpenses: 0,
@@ -39,7 +56,7 @@ export default function ProfileScreen({ navigation }) {
     if (!ts) return new Date(0);
     if (ts.toDate) return ts.toDate();
     if (ts.seconds) return new Date(ts.seconds * 1000);
-    if (typeof ts === 'number') return new Date(ts);
+    if (typeof ts === "number") return new Date(ts);
     return new Date(ts);
   };
 
@@ -49,15 +66,24 @@ export default function ProfileScreen({ navigation }) {
     calculateStats();
   }, [user]);
 
+  // Update payment fields when userData loads
+  useEffect(() => {
+    if (userData) {
+      setUpiId(userData.upiId || "");
+      setBankAccount(userData.bankAccount || "");
+      setBankIfsc(userData.bankIfsc || "");
+    }
+  }, [userData]);
+
   const loadUserProfile = async () => {
     if (!user) return;
     try {
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      const userDoc = await getDoc(doc(db, "users", user.uid));
       if (userDoc.exists()) {
         setUserData({ id: userDoc.id, ...userDoc.data() });
       }
     } catch (error) {
-      console.error('Error loading profile:', error);
+      console.error("Error loading profile:", error);
     }
   };
 
@@ -66,7 +92,10 @@ export default function ProfileScreen({ navigation }) {
     try {
       // Get all groups user is in
       const groupsSnap = await getDocs(
-        query(collection(db, 'groups'), where('members', 'array-contains', user.uid))
+        query(
+          collection(db, "groups"),
+          where("members", "array-contains", user.uid),
+        ),
       );
       const groups = [];
       groupsSnap.forEach((d) => groups.push({ id: d.id, ...d.data() }));
@@ -75,7 +104,7 @@ export default function ProfileScreen({ navigation }) {
       let allExpenses = [];
       for (const g of groups) {
         const expSnap = await getDocs(
-          query(collection(db, 'expenses'), where('groupId', '==', g.id))
+          query(collection(db, "expenses"), where("groupId", "==", g.id)),
         );
         expSnap.forEach((d) => {
           const expData = { id: d.id, ...d.data(), groupName: g.name };
@@ -87,14 +116,14 @@ export default function ProfileScreen({ navigation }) {
       let allSettlements = [];
       for (const g of groups) {
         const setSnap = await getDocs(
-          query(collection(db, 'settlements'), where('groupId', '==', g.id))
+          query(collection(db, "settlements"), where("groupId", "==", g.id)),
         );
         setSnap.forEach((d) => allSettlements.push({ id: d.id, ...d.data() }));
       }
 
       // User's expenses (where they paid or were involved)
       const userExpenses = allExpenses.filter(
-        (e) => e.paidBy === user.uid || e.splitBetween?.includes(user.uid)
+        (e) => e.paidBy === user.uid || e.splitBetween?.includes(user.uid),
       );
 
       // Calculate time-based stats
@@ -126,7 +155,8 @@ export default function ProfileScreen({ navigation }) {
         if (exp.amount > largestExpense) largestExpense = exp.amount;
 
         // Count expenses per group
-        groupExpenseCount[exp.groupId] = (groupExpenseCount[exp.groupId] || 0) + 1;
+        groupExpenseCount[exp.groupId] =
+          (groupExpenseCount[exp.groupId] || 0) + 1;
       });
 
       // Find most active group
@@ -141,13 +171,17 @@ export default function ProfileScreen({ navigation }) {
       });
 
       // Calculate daily average (based on days since first expense)
-      const firstExpense = userExpenses.length > 0
-        ? userExpenses.reduce((earliest, exp) => {
-            const expDate = toDate(exp.createdAt);
-            return expDate < earliest ? expDate : earliest;
-          }, toDate(userExpenses[0].createdAt))
-        : now;
-      const daysSinceFirst = Math.max(1, Math.ceil((now - firstExpense) / (24 * 60 * 60 * 1000)));
+      const firstExpense =
+        userExpenses.length > 0
+          ? userExpenses.reduce((earliest, exp) => {
+              const expDate = toDate(exp.createdAt);
+              return expDate < earliest ? expDate : earliest;
+            }, toDate(userExpenses[0].createdAt))
+          : now;
+      const daysSinceFirst = Math.max(
+        1,
+        Math.ceil((now - firstExpense) / (24 * 60 * 60 * 1000)),
+      );
       const dailyAvg = allTimeTotal / daysSinceFirst;
 
       // Calculate balances
@@ -156,7 +190,9 @@ export default function ProfileScreen({ navigation }) {
 
       for (const g of groups) {
         const groupExpenses = allExpenses.filter((e) => e.groupId === g.id);
-        const groupSettlements = allSettlements.filter((s) => s.groupId === g.id);
+        const groupSettlements = allSettlements.filter(
+          (s) => s.groupId === g.id,
+        );
 
         groupExpenses.forEach(({ paidBy, amount, splitBetween }) => {
           if (!paidBy || !splitBetween) return;
@@ -181,7 +217,7 @@ export default function ProfileScreen({ navigation }) {
         totalGroups: groups.length,
         totalExpenses: userExpenses.length,
         totalSettlements: allSettlements.filter(
-          (s) => s.from === user.uid || s.to === user.uid
+          (s) => s.from === user.uid || s.to === user.uid,
         ).length,
         dailyAvg,
         weeklyTotal,
@@ -195,16 +231,20 @@ export default function ProfileScreen({ navigation }) {
 
       setLoading(false);
     } catch (error) {
-      console.error('Error calculating stats:', error);
+      console.error("Error calculating stats:", error);
       setLoading(false);
     }
   };
 
   const handleImagePick = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please allow access to photos to update profile picture');
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission needed",
+          "Please allow access to photos to update profile picture",
+        );
         return;
       }
 
@@ -217,57 +257,58 @@ export default function ProfileScreen({ navigation }) {
 
       if (!result.canceled && result.assets[0]) {
         const imageUri = result.assets[0].uri;
-        
+
         // Update Firestore with image URI
-        await updateDoc(doc(db, 'users', user.uid), {
+        await updateDoc(doc(db, "users", user.uid), {
           photoURL: imageUri,
         });
 
         setUserData({ ...userData, photoURL: imageUri });
-        Alert.alert('Success', 'Profile picture updated!');
+        Alert.alert("Success", "Profile picture updated!");
       }
     } catch (error) {
-      console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to update profile picture');
+      console.error("Error picking image:", error);
+      Alert.alert("Error", "Failed to update profile picture");
     }
   };
 
   const handleSignOut = async () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut(auth);
-            } catch (error) {
-              console.error('Sign out error:', error);
-              Alert.alert('Error', 'Failed to sign out');
-            }
-          },
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await signOut(auth);
+          } catch (error) {
+            console.error("Sign out error:", error);
+            Alert.alert("Error", "Failed to sign out");
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const StatCard = ({ icon, label, value, color, trend }) => (
     <View style={styles.statCard}>
-      <View style={[styles.statIcon, { backgroundColor: color + '20' }]}>
+      <View style={[styles.statIcon, { backgroundColor: color + "20" }]}>
         <Ionicons name={icon} size={28} color={color} />
       </View>
       <Text style={styles.statLabel}>{label}</Text>
       <View style={styles.statValueRow}>
         <Text style={styles.statValue}>{value}</Text>
         {trend && (
-          <View style={[styles.trendBadge, { backgroundColor: trend > 0 ? '#FEE2E2' : '#D1FAE5' }]}>
+          <View
+            style={[
+              styles.trendBadge,
+              { backgroundColor: trend > 0 ? "#FEE2E2" : "#D1FAE5" },
+            ]}
+          >
             <Ionicons
-              name={trend > 0 ? 'trending-up' : 'trending-down'}
+              name={trend > 0 ? "trending-up" : "trending-down"}
               size={12}
-              color={trend > 0 ? '#EF4444' : '#10B981'}
+              color={trend > 0 ? "#EF4444" : "#10B981"}
             />
           </View>
         )}
@@ -275,9 +316,9 @@ export default function ProfileScreen({ navigation }) {
     </View>
   );
 
-  const InfoRow = ({ icon, label, value, color = '#6366F1' }) => (
+  const InfoRow = ({ icon, label, value, color = "#6366F1" }) => (
     <View style={styles.infoRow}>
-      <View style={[styles.infoIcon, { backgroundColor: color + '15' }]}>
+      <View style={[styles.infoIcon, { backgroundColor: color + "15" }]}>
         <Ionicons name={icon} size={20} color={color} />
       </View>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -296,7 +337,7 @@ export default function ProfileScreen({ navigation }) {
   const netBalance = stats.totalOwed - stats.totalOwe;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Profile</Text>
@@ -305,16 +346,26 @@ export default function ProfileScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* Profile Section */}
         <View style={styles.profileSection}>
-          <TouchableOpacity onPress={handleImagePick} style={styles.avatarContainer}>
+          <TouchableOpacity
+            onPress={handleImagePick}
+            style={styles.avatarContainer}
+          >
             {userData?.photoURL ? (
-              <Image source={{ uri: userData.photoURL }} style={styles.avatarImage} />
+              <Image
+                source={{ uri: userData.photoURL }}
+                style={styles.avatarImage}
+              />
             ) : (
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>
-                  {userData?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase()}
+                  {userData?.name?.charAt(0)?.toUpperCase() ||
+                    user?.email?.charAt(0)?.toUpperCase()}
                 </Text>
               </View>
             )}
@@ -323,20 +374,47 @@ export default function ProfileScreen({ navigation }) {
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.userName}>{userData?.name || 'User'}</Text>
+          <Text style={styles.userName}>{userData?.name || "User"}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
-
+          <TouchableOpacity
+            style={[
+              styles.planBadge,
+              {
+                backgroundColor: currentPlan.color + "20",
+                borderColor: currentPlan.color,
+              },
+            ]}
+            onPress={() => navigation.navigate("Premium")}
+          >
+            <Text style={{ fontSize: 16, marginRight: 4 }}>
+              {currentPlan.icon}
+            </Text>
+            <Text style={[styles.planBadgeText, { color: currentPlan.color }]}>
+              {currentPlan.name} Plan
+            </Text>
+            {isFree && (
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={currentPlan.color}
+                style={{ marginLeft: 4 }}
+              />
+            )}
+          </TouchableOpacity>
           {/* Net Balance Badge */}
           <View
             style={[
               styles.balanceBadge,
-              { backgroundColor: netBalance >= 0 ? '#D1FAE5' : '#FEE2E2' },
+              { backgroundColor: netBalance >= 0 ? "#D1FAE5" : "#FEE2E2" },
             ]}
           >
             <Text
-              style={[styles.balanceText, { color: netBalance >= 0 ? '#10B981' : '#EF4444' }]}
+              style={[
+                styles.balanceText,
+                { color: netBalance >= 0 ? "#10B981" : "#EF4444" },
+              ]}
             >
-              {netBalance >= 0 ? '💰 ' : '⚠️ '}
+              {netBalance >= 0 ? "💰 " : "⚠️ "}
               Net Balance: ₹{Math.abs(netBalance).toFixed(2)}
             </Text>
           </View>
@@ -381,7 +459,7 @@ export default function ProfileScreen({ navigation }) {
               <View style={styles.balanceItem}>
                 <Ionicons name="arrow-down-circle" size={28} color="#10B981" />
                 <Text style={styles.balanceLabel}>Owed to You</Text>
-                <Text style={[styles.balanceAmount, { color: '#10B981' }]}>
+                <Text style={[styles.balanceAmount, { color: "#10B981" }]}>
                   ₹{stats.totalOwed.toFixed(2)}
                 </Text>
               </View>
@@ -389,7 +467,7 @@ export default function ProfileScreen({ navigation }) {
               <View style={styles.balanceItem}>
                 <Ionicons name="arrow-up-circle" size={28} color="#EF4444" />
                 <Text style={styles.balanceLabel}>You Owe</Text>
-                <Text style={[styles.balanceAmount, { color: '#EF4444' }]}>
+                <Text style={[styles.balanceAmount, { color: "#EF4444" }]}>
                   ₹{stats.totalOwe.toFixed(2)}
                 </Text>
               </View>
@@ -401,7 +479,12 @@ export default function ProfileScreen({ navigation }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>📊 Activity Statistics</Text>
           <View style={styles.card}>
-            <InfoRow icon="people" label="Groups Joined" value={stats.totalGroups} color="#6366F1" />
+            <InfoRow
+              icon="people"
+              label="Groups Joined"
+              value={stats.totalGroups}
+              color="#6366F1"
+            />
             <InfoRow
               icon="receipt"
               label="Total Expenses"
@@ -455,7 +538,8 @@ export default function ProfileScreen({ navigation }) {
               <View style={styles.insightItem}>
                 <Ionicons name="alert-circle" size={20} color="#EF4444" />
                 <Text style={styles.insightText}>
-                  You owe ₹{Math.abs(netBalance).toFixed(2)} overall. Consider settling up!
+                  You owe ₹{Math.abs(netBalance).toFixed(2)} overall. Consider
+                  settling up!
                 </Text>
               </View>
             )}
@@ -463,7 +547,8 @@ export default function ProfileScreen({ navigation }) {
               <View style={styles.insightItem}>
                 <Ionicons name="checkmark-circle" size={20} color="#10B981" />
                 <Text style={styles.insightText}>
-                  You're owed ₹{netBalance.toFixed(2)}. Others should settle with you!
+                  You're owed ₹{netBalance.toFixed(2)}. Others should settle
+                  with you!
                 </Text>
               </View>
             )}
@@ -478,6 +563,113 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
 
+        {/* Payment Information Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Ionicons
+              name="card-outline"
+              size={20}
+              color="#6366F1"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.sectionTitle}>Payment Information</Text>
+          </View>
+          <Text style={styles.sectionDesc}>
+            Share your payment details so group members can pay you easily. This
+            info is only visible to your group members.
+          </Text>
+
+          <View style={styles.paymentCard}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>UPI ID</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons
+                  name="phone-portrait-outline"
+                  size={18}
+                  color="#9CA3AF"
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="yourname@upi"
+                  value={upiId}
+                  onChangeText={setUpiId}
+                  autoCapitalize="none"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Bank Account Number</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons
+                  name="business-outline"
+                  size={18}
+                  color="#9CA3AF"
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Account number"
+                  value={bankAccount}
+                  onChangeText={setBankAccount}
+                  keyboardType="number-pad"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>IFSC Code</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons
+                  name="code-working-outline"
+                  size={18}
+                  color="#9CA3AF"
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="IFSC code"
+                  value={bankIfsc}
+                  onChangeText={setBankIfsc}
+                  autoCapitalize="characters"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.savePaymentBtn}
+              onPress={async () => {
+                try {
+                  await updateDoc(doc(db, "users", user.uid), {
+                    upiId: upiId.trim(),
+                    bankAccount: bankAccount.trim(),
+                    bankIfsc: bankIfsc.trim().toUpperCase(),
+                    updatedAt: Date.now(),
+                  });
+                  Alert.alert(
+                    "Saved!",
+                    "Payment information updated successfully.",
+                  );
+                } catch (e) {
+                  Alert.alert("Error", e.message);
+                }
+              }}
+            >
+              <Ionicons
+                name="save-outline"
+                size={18}
+                color="#fff"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.savePaymentBtnTxt}>Save Payment Info</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Sign Out Button */}
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={20} color="#fff" />
@@ -486,42 +678,41 @@ export default function ProfileScreen({ navigation }) {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: "#F9FAFB",
   },
   loadingContainer: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 20,
-    // paddingTop: 60,
     paddingBottom: 16,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#E5E7EB",
   },
   headerTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: "bold",
+    color: "#1F2937",
   },
   refreshBtn: {
     width: 40,
     height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
   },
   scrollView: {
     flex: 1,
@@ -530,22 +721,22 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   profileSection: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: 30,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     marginBottom: 16,
   },
   avatarContainer: {
-    position: 'relative',
+    position: "relative",
     marginBottom: 16,
   },
   avatar: {
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#6366F1',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#6366F1",
+    justifyContent: "center",
+    alignItems: "center",
   },
   avatarImage: {
     width: 100,
@@ -554,31 +745,31 @@ const styles = StyleSheet.create({
   },
   avatarText: {
     fontSize: 40,
-    fontWeight: 'bold',
-    color: '#fff',
+    fontWeight: "bold",
+    color: "#fff",
   },
   cameraIcon: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     right: 0,
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#6366F1',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#6366F1",
+    justifyContent: "center",
+    alignItems: "center",
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: "#fff",
   },
   userName: {
     fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: "bold",
+    color: "#1F2937",
     marginBottom: 4,
   },
   userEmail: {
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 16,
   },
   balanceBadge: {
@@ -589,30 +780,40 @@ const styles = StyleSheet.create({
   },
   balanceText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   section: {
     marginBottom: 16,
     paddingHorizontal: 16,
   },
+  sectionHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 12,
+    fontWeight: "bold",
+    color: "#1F2937",
+  },
+  sectionDesc: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 14,
+    lineHeight: 18,
   },
   statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
   },
   statCard: {
-    width: '48%',
-    backgroundColor: '#fff',
+    width: "48%",
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 12,
     marginBottom: 12,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
@@ -622,26 +823,26 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: 12,
-    alignSelf: 'center',
+    alignSelf: "center",
   },
   statLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: "#6B7280",
     marginBottom: 6,
-    textAlign: 'center',
+    textAlign: "center",
   },
   statValueRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
   statValue: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: "bold",
+    color: "#1F2937",
   },
   trendBadge: {
     marginLeft: 6,
@@ -650,107 +851,172 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   balanceCard: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 20,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
   },
   balanceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
+    flexDirection: "row",
+    justifyContent: "space-around",
   },
   balanceItem: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: "center",
   },
   divider: {
     width: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: "#E5E7EB",
     marginHorizontal: 16,
   },
   balanceLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: "#6B7280",
     marginTop: 8,
     marginBottom: 4,
   },
   balanceAmount: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: "bold",
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
   },
   infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
   infoIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginRight: 12,
   },
   infoLabel: {
     flex: 1,
     fontSize: 14,
-    color: '#6B7280',
+    color: "#6B7280",
   },
   infoValue: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
+    fontWeight: "600",
+    color: "#1F2937",
   },
   insightItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
+  planBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingVertical: 6,
+  paddingHorizontal: 14,
+  borderRadius: 20,
+  borderWidth: 1.5,
+  marginBottom: 16,
+},
+planBadgeText: {
+  fontSize: 13,
+  fontWeight: '700',
+},
   insightText: {
     flex: 1,
     fontSize: 14,
-    color: '#4B5563',
+    color: "#4B5563",
     marginLeft: 12,
     lineHeight: 20,
   },
+  // Payment section styles
+  paymentCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 18,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  inputGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1F2937",
+    marginBottom: 6,
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: 12,
+  },
+  inputIcon: {
+    marginRight: 8,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#1F2937",
+  },
+  savePaymentBtn: {
+    flexDirection: "row",
+    backgroundColor: "#6366F1",
+    padding: 14,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+  },
+  savePaymentBtnTxt: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 15,
+  },
   signOutButton: {
-    flexDirection: 'row',
-    backgroundColor: '#EF4444',
+    flexDirection: "row",
+    backgroundColor: "#EF4444",
     marginHorizontal: 16,
     paddingVertical: 14,
     paddingHorizontal: 24,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginTop: 8,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
   signOutText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     marginLeft: 8,
   },
 });
