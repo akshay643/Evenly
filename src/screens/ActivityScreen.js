@@ -8,7 +8,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AuthContext } from '../context/AuthContext';
@@ -24,6 +23,7 @@ import {
   getDoc,
 } from 'firebase/firestore';
 import { db } from '../../firebase.config';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function ActivityScreen({ navigation }) {
   const { user } = useContext(AuthContext);

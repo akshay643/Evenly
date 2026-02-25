@@ -1,3 +1,4 @@
+// src/screens/ProfileScreen.js
 import React, { useContext, useState, useEffect } from "react";
 import {
   View,
@@ -10,6 +11,7 @@ import {
   Alert,
   TextInput,
 } from "react-native";
+import PremiumBadge from "../components/PremiumBadge";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { signOut } from "firebase/auth";
@@ -26,13 +28,13 @@ import {
 } from "firebase/firestore";
 import { PremiumContext } from "../context/PremiumContext";
 import { SafeAreaView } from "react-native-safe-area-context";
+
 export default function ProfileScreen({ navigation }) {
   const { user } = useContext(AuthContext);
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
   const { currentPlan, isFree, isPro, isPremium } = useContext(PremiumContext);
 
-  // Initialize with empty strings, update via useEffect
   const [upiId, setUpiId] = useState("");
   const [bankAccount, setBankAccount] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
@@ -51,7 +53,6 @@ export default function ProfileScreen({ navigation }) {
     totalOwe: 0,
   });
 
-  // Firestore timestamp / Date.now() / ISO → JS Date
   const toDate = (ts) => {
     if (!ts) return new Date(0);
     if (ts.toDate) return ts.toDate();
@@ -66,7 +67,6 @@ export default function ProfileScreen({ navigation }) {
     calculateStats();
   }, [user]);
 
-  // Update payment fields when userData loads
   useEffect(() => {
     if (userData) {
       setUpiId(userData.upiId || "");
@@ -90,43 +90,37 @@ export default function ProfileScreen({ navigation }) {
   const calculateStats = async () => {
     if (!user) return;
     try {
-      // Get all groups user is in
       const groupsSnap = await getDocs(
         query(
           collection(db, "groups"),
-          where("members", "array-contains", user.uid),
-        ),
+          where("members", "array-contains", user.uid)
+        )
       );
       const groups = [];
       groupsSnap.forEach((d) => groups.push({ id: d.id, ...d.data() }));
 
-      // Get all expenses
       let allExpenses = [];
       for (const g of groups) {
         const expSnap = await getDocs(
-          query(collection(db, "expenses"), where("groupId", "==", g.id)),
+          query(collection(db, "expenses"), where("groupId", "==", g.id))
         );
         expSnap.forEach((d) => {
-          const expData = { id: d.id, ...d.data(), groupName: g.name };
-          allExpenses.push(expData);
+          allExpenses.push({ id: d.id, ...d.data(), groupName: g.name });
         });
       }
 
-      // Get all settlements
       let allSettlements = [];
       for (const g of groups) {
         const setSnap = await getDocs(
-          query(collection(db, "settlements"), where("groupId", "==", g.id)),
+          query(collection(db, "settlements"), where("groupId", "==", g.id))
         );
         setSnap.forEach((d) => allSettlements.push({ id: d.id, ...d.data() }));
       }
 
-      // User's expenses (where they paid or were involved)
       const userExpenses = allExpenses.filter(
-        (e) => e.paidBy === user.uid || e.splitBetween?.includes(user.uid),
+        (e) => e.paidBy === user.uid || e.splitBetween?.includes(user.uid)
       );
 
-      // Calculate time-based stats
       const now = new Date();
       const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -137,7 +131,6 @@ export default function ProfileScreen({ navigation }) {
       let monthlyTotal = 0;
       let allTimeTotal = 0;
       let largestExpense = 0;
-
       const groupExpenseCount = {};
 
       userExpenses.forEach((exp) => {
@@ -147,30 +140,24 @@ export default function ProfileScreen({ navigation }) {
           : 0;
 
         allTimeTotal += userShare;
-
         if (expDate >= dayAgo) dailyTotal += userShare;
         if (expDate >= weekAgo) weeklyTotal += userShare;
         if (expDate >= monthAgo) monthlyTotal += userShare;
-
         if (exp.amount > largestExpense) largestExpense = exp.amount;
 
-        // Count expenses per group
         groupExpenseCount[exp.groupId] =
           (groupExpenseCount[exp.groupId] || 0) + 1;
       });
 
-      // Find most active group
       let mostActiveGroup = null;
       let maxCount = 0;
       Object.entries(groupExpenseCount).forEach(([groupId, count]) => {
         if (count > maxCount) {
           maxCount = count;
-          const group = groups.find((g) => g.id === groupId);
-          mostActiveGroup = group;
+          mostActiveGroup = groups.find((g) => g.id === groupId);
         }
       });
 
-      // Calculate daily average (based on days since first expense)
       const firstExpense =
         userExpenses.length > 0
           ? userExpenses.reduce((earliest, exp) => {
@@ -180,18 +167,17 @@ export default function ProfileScreen({ navigation }) {
           : now;
       const daysSinceFirst = Math.max(
         1,
-        Math.ceil((now - firstExpense) / (24 * 60 * 60 * 1000)),
+        Math.ceil((now - firstExpense) / (24 * 60 * 60 * 1000))
       );
       const dailyAvg = allTimeTotal / daysSinceFirst;
 
-      // Calculate balances
       let totalOwed = 0;
       let totalOwe = 0;
 
       for (const g of groups) {
         const groupExpenses = allExpenses.filter((e) => e.groupId === g.id);
         const groupSettlements = allSettlements.filter(
-          (s) => s.groupId === g.id,
+          (s) => s.groupId === g.id
         );
 
         groupExpenses.forEach(({ paidBy, amount, splitBetween }) => {
@@ -217,7 +203,7 @@ export default function ProfileScreen({ navigation }) {
         totalGroups: groups.length,
         totalExpenses: userExpenses.length,
         totalSettlements: allSettlements.filter(
-          (s) => s.from === user.uid || s.to === user.uid,
+          (s) => s.from === user.uid || s.to === user.uid
         ).length,
         dailyAvg,
         weeklyTotal,
@@ -243,7 +229,7 @@ export default function ProfileScreen({ navigation }) {
       if (status !== "granted") {
         Alert.alert(
           "Permission needed",
-          "Please allow access to photos to update profile picture",
+          "Please allow access to photos to update profile picture"
         );
         return;
       }
@@ -257,12 +243,9 @@ export default function ProfileScreen({ navigation }) {
 
       if (!result.canceled && result.assets[0]) {
         const imageUri = result.assets[0].uri;
-
-        // Update Firestore with image URI
         await updateDoc(doc(db, "users", user.uid), {
           photoURL: imageUri,
         });
-
         setUserData({ ...userData, photoURL: imageUri });
         Alert.alert("Success", "Profile picture updated!");
       }
@@ -350,7 +333,7 @@ export default function ProfileScreen({ navigation }) {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Profile Section */}
+        {/* ═══ Profile Section with PremiumBadge ═══ */}
         <View style={styles.profileSection}>
           <TouchableOpacity
             onPress={handleImagePick}
@@ -374,8 +357,17 @@ export default function ProfileScreen({ navigation }) {
             </View>
           </TouchableOpacity>
 
-          <Text style={styles.userName}>{userData?.name || "User"}</Text>
+          {/* ✅ Name + Inline Premium Badge */}
+          <View style={styles.nameRow}>
+            <Text style={styles.userName}>
+              {userData?.name || "User"}
+            </Text>
+            <PremiumBadge size="small" />
+          </View>
+
           <Text style={styles.userEmail}>{user?.email}</Text>
+
+          {/* ✅ Plan badge (tappable, shows for all users) */}
           <TouchableOpacity
             style={[
               styles.planBadge,
@@ -389,7 +381,9 @@ export default function ProfileScreen({ navigation }) {
             <Text style={{ fontSize: 16, marginRight: 4 }}>
               {currentPlan.icon}
             </Text>
-            <Text style={[styles.planBadgeText, { color: currentPlan.color }]}>
+            <Text
+              style={[styles.planBadgeText, { color: currentPlan.color }]}
+            >
               {currentPlan.name} Plan
             </Text>
             {isFree && (
@@ -401,6 +395,7 @@ export default function ProfileScreen({ navigation }) {
               />
             )}
           </TouchableOpacity>
+
           {/* Net Balance Badge */}
           <View
             style={[
@@ -419,6 +414,13 @@ export default function ProfileScreen({ navigation }) {
             </Text>
           </View>
         </View>
+
+        {/* ✅ Upgrade Banner — only for free users */}
+        {isFree && (
+          <View style={styles.bannerSection}>
+            <PremiumBadge size="banner" tappable animate />
+          </View>
+        )}
 
         {/* Expense Insights */}
         <View style={styles.section}>
@@ -513,27 +515,30 @@ export default function ProfileScreen({ navigation }) {
             )}
           </View>
         </View>
-<View style={styles.section}>
-  <TouchableOpacity
-    style={styles.friendsCard}
-    onPress={() => navigation.navigate('Friends')}
-    activeOpacity={0.7}
-  >
-    <View style={styles.friendsCardLeft}>
-      <View style={styles.friendsIconContainer}>
-        <Ionicons name="people" size={28} color="#6366F1" />
-      </View>
-      <View style={{ flex: 1, marginLeft: 14 }}>
-        <Text style={styles.friendsCardTitle}>My Friends</Text>
-        <Text style={styles.friendsCardSubtitle}>
-          Manage your friends list for quick group additions
-        </Text>
-      </View>
-    </View>
-    <Ionicons name="chevron-forward" size={22} color="#9CA3AF" />
-  </TouchableOpacity>
-</View>
-        {/* Insights & Tips */}
+
+        {/* Friends */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.friendsCard}
+            onPress={() => navigation.navigate("Friends")}
+            activeOpacity={0.7}
+          >
+            <View style={styles.friendsCardLeft}>
+              <View style={styles.friendsIconContainer}>
+                <Ionicons name="people" size={28} color="#6366F1" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <Text style={styles.friendsCardTitle}>My Friends</Text>
+                <Text style={styles.friendsCardSubtitle}>
+                  Manage your friends list for quick group additions
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={22} color="#9CA3AF" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Smart Insights */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>💡 Smart Insights</Text>
           <View style={styles.card}>
@@ -582,7 +587,45 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Payment Information Section */}
+        {/* ✅ Subscription Management Row */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.subscriptionRow}
+            onPress={() => navigation.navigate("Premium")}
+            activeOpacity={0.7}
+          >
+            <View style={styles.subscriptionLeft}>
+              <View
+                style={[
+                  styles.subscriptionIcon,
+                  { backgroundColor: currentPlan.color + "15" },
+                ]}
+              >
+                <Ionicons
+                  name={isFree ? "sparkles" : "star"}
+                  size={22}
+                  color={currentPlan.color}
+                />
+              </View>
+              <View style={{ flex: 1, marginLeft: 14 }}>
+                <View style={styles.subscriptionTitleRow}>
+                  <Text style={styles.subscriptionTitle}>
+                    {isFree ? "Upgrade to Pro" : "Manage Subscription"}
+                  </Text>
+                  <PremiumBadge size="inline" showIfFree />
+                </View>
+                <Text style={styles.subscriptionSubtitle}>
+                  {isFree
+                    ? "Unlock all features & remove limits"
+                    : `${currentPlan.name} plan active`}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#D1D5DB" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Payment Information */}
         <View style={styles.section}>
           <View style={styles.sectionHead}>
             <Ionicons
@@ -671,7 +714,7 @@ export default function ProfileScreen({ navigation }) {
                   });
                   Alert.alert(
                     "Saved!",
-                    "Payment information updated successfully.",
+                    "Payment information updated successfully."
                   );
                 } catch (e) {
                   Alert.alert("Error", e.message);
@@ -689,7 +732,7 @@ export default function ProfileScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Sign Out Button */}
+        {/* Sign Out */}
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={20} color="#fff" />
           <Text style={styles.signOutText}>Sign Out</Text>
@@ -780,16 +823,36 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: "#fff",
   },
+
+  // ✅ NEW: Name row with badge
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
   userName: {
     fontSize: 22,
     fontWeight: "bold",
     color: "#1F2937",
-    marginBottom: 4,
   },
   userEmail: {
     fontSize: 14,
     color: "#6B7280",
     marginBottom: 16,
+  },
+  planBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    marginBottom: 16,
+  },
+  planBadgeText: {
+    fontSize: 13,
+    fontWeight: "700",
   },
   balanceBadge: {
     paddingVertical: 8,
@@ -801,6 +864,53 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+
+  // ✅ NEW: Banner section
+  bannerSection: {
+    marginBottom: 8,
+  },
+
+  // ✅ NEW: Subscription row
+  subscriptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  subscriptionLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  subscriptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  subscriptionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  subscriptionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1F2937",
+  },
+  subscriptionSubtitle: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    marginTop: 2,
+  },
+
   section: {
     marginBottom: 16,
     paddingHorizontal: 16,
@@ -879,45 +989,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
-  friendsCard: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  backgroundColor: '#fff',
-  borderRadius: 14,
-  padding: 18,
-  shadowColor: '#000',
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.06,
-  shadowRadius: 4,
-  elevation: 2,
-  borderWidth: 1.5,
-  borderColor: '#C7D2FE',
-},
-friendsCardLeft: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  flex: 1,
-},
-friendsIconContainer: {
-  width: 52,
-  height: 52,
-  borderRadius: 26,
-  backgroundColor: '#EEF2FF',
-  justifyContent: 'center',
-  alignItems: 'center',
-},
-friendsCardTitle: {
-  fontSize: 17,
-  fontWeight: '700',
-  color: '#1F2937',
-  marginBottom: 4,
-},
-friendsCardSubtitle: {
-  fontSize: 13,
-  color: '#6B7280',
-  lineHeight: 18,
-},
   balanceRow: {
     flexDirection: "row",
     justifyContent: "space-around",
@@ -976,6 +1047,45 @@ friendsCardSubtitle: {
     fontWeight: "600",
     color: "#1F2937",
   },
+  friendsCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 18,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+    borderWidth: 1.5,
+    borderColor: "#C7D2FE",
+  },
+  friendsCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  friendsIconContainer: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  friendsCardTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1F2937",
+    marginBottom: 4,
+  },
+  friendsCardSubtitle: {
+    fontSize: 13,
+    color: "#6B7280",
+    lineHeight: 18,
+  },
   insightItem: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -983,19 +1093,6 @@ friendsCardSubtitle: {
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
-  planBadge: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  paddingVertical: 6,
-  paddingHorizontal: 14,
-  borderRadius: 20,
-  borderWidth: 1.5,
-  marginBottom: 16,
-},
-planBadgeText: {
-  fontSize: 13,
-  fontWeight: '700',
-},
   insightText: {
     flex: 1,
     fontSize: 14,
@@ -1003,7 +1100,6 @@ planBadgeText: {
     marginLeft: 12,
     lineHeight: 20,
   },
-  // Payment section styles
   paymentCard: {
     backgroundColor: "#fff",
     borderRadius: 14,
