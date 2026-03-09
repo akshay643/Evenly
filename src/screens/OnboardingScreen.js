@@ -21,7 +21,7 @@ const SLIDES = [
     emoji: "💰",
     title: "Split Expenses\nEffortlessly",
     subtitle:
-      "Create groups, add expenses, and let Evenly figure out who owes what — no math needed.",
+      "Create groups, add expenses, and let Evynly figure out who owes what — no math needed.",
     accent: "#6366F1",
     bgDots: "#6366F120",
   },

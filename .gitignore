@@ -2,6 +2,8 @@ node_modules/
 .expo/
 dist/
 .env
+.env.local
+.env.*.local
 *.jks
 *.p8
 *.p12
@@ -9,3 +11,16 @@ dist/
 *.mobileprovision
 *.orig.*
 web-build/
+
+# Environment and secrets
+.env.production
+.env.development
+.env.staging
+
+# Build outputs
+build/
+*.ipa
+*.apk
+*.aab
+
+evenly-6ff36-2ac05faddc5a.json

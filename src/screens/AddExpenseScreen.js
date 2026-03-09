@@ -11,8 +11,19 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from 'expo-image-picker';
+import { Linking, Share } from 'react-native';
+
+// ✅ Import FREE Tesseract scanner
+import { 
+  scanReceiptWithTesseract, 
+  validateReceiptData,
+  formatCurrency 
+} from '../utils/receiptScanner';
+
 import {
   sendPushNotification,
   NotificationTemplates,
@@ -36,26 +47,27 @@ import SplitMethodPicker from "../components/SplitMethodPicker";
 
 export default function AddExpenseScreen({ navigation, route }) {
   const { user } = useContext(AuthContext);
-  const { hasFeature } = useContext(PremiumContext);
+  const { hasFeature, isPremium } = useContext(PremiumContext);
   const { checkLimit } = usePremiumLimit();
-
+  
+  // States
+  const [scanning, setScanning] = useState(false);
+  const [scannedReceipt, setScannedReceipt] = useState(null);
   const [description, setDescription] = useState("");
+  const [scanError, setScanError] = useState(null);
+  const [scanProgress, setScanProgress] = useState(''); // ✅ For Tesseract progress
   const [amount, setAmount] = useState("");
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingGroups, setLoadingGroups] = useState(true);
-
-  // Member data + split selection
   const [membersData, setMembersData] = useState([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedMembers, setSelectedMembers] = useState([]);
 
-  // Real-time count of user's expenses in selected group
   const { count: userExpenseCount, loading: countLoading } =
     useGroupExpenseCount(user?.uid, selectedGroup?.id);
 
-  // Split data from SplitMethodPicker
   const [splitData, setSplitData] = useState({
     method: "equal",
     splitAmounts: {},
@@ -74,6 +86,219 @@ export default function AddExpenseScreen({ navigation, route }) {
       setSelectedMembers([]);
     }
   }, [selectedGroup?.id]);
+
+  // ========================================
+  // ✅ TESSERACT RECEIPT SCANNING
+  // ========================================
+  
+  const scanReceipt = async () => {
+    if (!hasFeature('receiptScanning')) {
+      Alert.alert(
+        '🔒 Premium Feature',
+        'Receipt scanning with AI is available with Premium.\n\n✓ Auto-detect amount\n✓ Extract merchant name\n✓ Find line items\n✓ Higher accuracy',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: '💎 Upgrade for ₹149', onPress: () => navigation.navigate('Premium') },
+        ]
+      );
+      return;
+    }
+
+    setScanError(null);
+    setScanProgress('');
+    
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Needed', 'Please allow photo access to scan receipts');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.9,
+      allowsEditing: true,
+      aspect: [3, 4],
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      const imageUri = result.assets[0].uri;
+      setScannedReceipt(imageUri);
+      setScanning(true);
+      setScanProgress('Initializing scanner...');
+
+      try {
+        console.log('🔄 Starting Tesseract scan...');
+        
+        // ✅ Scan with progress callback
+        const extractedData = await scanReceiptWithTesseract(imageUri, (progress) => {
+          setScanProgress(progress);
+        });
+        
+        console.log('📊 Scan complete:', extractedData);
+
+        // Validate
+        const validation = validateReceiptData(extractedData);
+
+        // ✅ Auto-fill form
+        if (extractedData.amount > 0) {
+          setAmount(extractedData.amount.toString());
+        }
+
+        if (extractedData.description && extractedData.description !== 'Receipt Expense') {
+          setDescription(extractedData.description);
+        }
+
+        setScanning(false);
+        setScanProgress('');
+
+        // Show results
+        if (validation.errors.length > 0) {
+          Alert.alert(
+            '⚠️ Partial Scan',
+            `${validation.errors.join('\n')}\n\nPlease verify values manually.`,
+            [{ text: 'OK' }]
+          );
+        } else {
+          const warningText = validation.warnings.length > 0 
+            ? `\n\n⚠️ ${validation.warnings.join('\n')}`
+            : '';
+          
+          Alert.alert(
+            '✅ Receipt Scanned!',
+            `Amount: ${formatCurrency(extractedData.amount)}\nMerchant: ${extractedData.description}\nConfidence: ${Math.round(extractedData.confidence * 100)}%${warningText}\n\nPlease verify the values.`,
+            [
+              { text: 'Edit Values', style: 'cancel' },
+              { text: 'Looks Good ✓' }
+            ]
+          );
+        }
+
+      } catch (error) {
+        console.error('❌ Scan failed:', error);
+        setScanning(false);
+        setScanProgress('');
+        setScanError(error.message);
+        
+        Alert.alert(
+          '❌ Scan Failed',
+          `${error.message}\n\nTips:\n• Use good lighting\n• Keep receipt flat\n• Make text readable\n• Avoid shadows`,
+          [
+            { text: 'Try Again', onPress: () => setScannedReceipt(null) },
+            { text: 'Enter Manually' }
+          ]
+        );
+      }
+    }
+  };
+
+  const takeReceiptPhoto = async () => {
+    if (!hasFeature('receiptScanning')) {
+      Alert.alert(
+        '🔒 Premium Feature',
+        'Receipt scanning is a Premium feature.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: '💎 Upgrade for ₹149', onPress: () => navigation.navigate('Premium') },
+        ]
+      );
+      return;
+    }
+
+    setScanError(null);
+    setScanProgress('');
+
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Needed', 'Please allow camera access');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      quality: 0.9,
+      allowsEditing: true,
+      aspect: [3, 4],
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      const imageUri = result.assets[0].uri;
+      setScannedReceipt(imageUri);
+      setScanning(true);
+      setScanProgress('Processing photo...');
+
+      try {
+        const extractedData = await scanReceiptWithTesseract(imageUri, (progress) => {
+          setScanProgress(progress);
+        });
+        
+        const validation = validateReceiptData(extractedData);
+
+        if (extractedData.amount > 0) setAmount(extractedData.amount.toString());
+        if (extractedData.description !== 'Receipt Expense') setDescription(extractedData.description);
+
+        setScanning(false);
+        setScanProgress('');
+
+        if (validation.isValid) {
+          Alert.alert(
+            '✅ Receipt Captured!',
+            `Amount: ${formatCurrency(extractedData.amount)}\nMerchant: ${extractedData.description}`,
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert(
+            '⚠️ Partial Detection',
+            `${validation.errors.join('\n')}\n\nPlease verify values.`,
+            [{ text: 'OK' }]
+          );
+        }
+
+      } catch (error) {
+        setScanning(false);
+        setScanProgress('');
+        setScanError(error.message);
+        Alert.alert('❌ Scan Failed', error.message);
+      }
+    }
+  };
+
+  // ========================================
+  // WhatsApp Share
+  // ========================================
+  
+  const shareExpenseToWhatsApp = async (expenseData) => {
+    const memberNames = selectedMembers
+      .map(id => membersData.find(m => m.id === id)?.name || membersData.find(m => m.id === id)?.email || 'Member')
+      .join(', ');
+    
+    const perPerson = parsedAmount / selectedMembers.length;
+    
+    const message = `🧾 *New Expense Added*
+
+📝 ${expenseData.description}
+💰 Total: ${sym}${parsedAmount.toFixed(2)}
+👥 Split between: ${selectedMembers.length} ${selectedMembers.length === 1 ? 'person' : 'people'}
+💵 Each pays: ${sym}${perPerson.toFixed(2)}
+
+Track & settle easily with SplitBill 👇
+https://play.google.com/store/apps/details?id=com.yourapp.splitbill`;
+
+    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+    
+    try {
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+      } else {
+        await Share.share({ message });
+      }
+    } catch (e) {
+      await Share.share({ message });
+    }
+  };
+
+  // ========================================
+  // Data Loading
+  // ========================================
 
   const loadGroups = async () => {
     if (!user) return;
@@ -142,14 +367,14 @@ export default function AddExpenseScreen({ navigation, route }) {
   const sym = getCurrencySymbol();
   const parsedAmount = parseFloat(amount) || 0;
 
-  // Check if split method is allowed based on plan
   const isSplitMethodAllowed = (method) => {
     if (method === "equal") return true;
-    if (method === "exact") return hasFeature("unequalSplit");
-    if (method === "percentage") return hasFeature("percentageSplit");
-    if (method === "shares") return hasFeature("sharesSplit");
-    return false;
+    return hasFeature("advancedSplits");
   };
+
+  // ========================================
+  // Handle Add Expense
+  // ========================================
 
   const handleAddExpense = async () => {
     if (!description.trim()) {
@@ -176,20 +401,28 @@ export default function AddExpenseScreen({ navigation, route }) {
       return;
     }
 
-    // Check split method is allowed by plan
     if (!isSplitMethodAllowed(splitData.method)) {
+      const methodNames = {
+        exact: "Exact amount",
+        percentage: "Percentage",
+        shares: "Share ratio",
+      };
+      const methodName = methodNames[splitData.method] || splitData.method;
+      
       Alert.alert(
         "🔒 Premium Feature",
-        `${splitData.method.charAt(0).toUpperCase() + splitData.method.slice(1)} split requires a Pro or Premium plan.`,
+        `${methodName} split is available with Premium. Upgrade to unlock all split methods!`,
         [
           { text: "Cancel", style: "cancel" },
-          { text: "⭐ Upgrade", onPress: () => navigation.navigate("Premium") },
+          { 
+            text: "💎 Upgrade to Premium", 
+            onPress: () => navigation.navigate("Premium") 
+          },
         ]
       );
       return;
     }
 
-    // Check per-group expense limit
     if (!checkLimit("maxExpensesPerGroup", userExpenseCount)) {
       return;
     }
@@ -206,6 +439,7 @@ export default function AddExpenseScreen({ navigation, route }) {
         splitMethod: splitData.method,
         createdAt: Date.now(),
         settled: false,
+        receiptImage: scannedReceipt || null,
       };
 
       if (splitData.method !== "equal") {
@@ -238,15 +472,34 @@ export default function AddExpenseScreen({ navigation, route }) {
         }
       }
 
-      Alert.alert("Success", "Expense added!", [
-        { text: "OK", onPress: () => navigation.goBack() },
-      ]);
+      Alert.alert(
+        "✅ Expense Added!",
+        `${sym}${parsedAmount.toFixed(2)} split between ${selectedMembers.length} ${selectedMembers.length === 1 ? 'person' : 'people'}`,
+        [
+          { 
+            text: "Share to WhatsApp", 
+            onPress: () => {
+              shareExpenseToWhatsApp(expenseDoc);
+              setTimeout(() => navigation.goBack(), 500);
+            }
+          },
+          { 
+            text: "Done", 
+            onPress: () => navigation.goBack(),
+            style: 'cancel'
+          },
+        ]
+      );
     } catch (error) {
       Alert.alert("Error", "Failed to add expense: " + error.message);
     } finally {
       setLoading(false);
     }
   };
+
+  // ========================================
+  // RENDER
+  // ========================================
 
   return (
     <KeyboardAvoidingView
@@ -267,7 +520,6 @@ export default function AddExpenseScreen({ navigation, route }) {
           <View style={{ width: 24 }} />
         </View>
 
-        {/* Limit indicator — shows only for free users */}
         {selectedGroup && !countLoading && (
           <LimitIndicator
             limitKey="maxExpensesPerGroup"
@@ -289,6 +541,100 @@ export default function AddExpenseScreen({ navigation, route }) {
               placeholderTextColor="#9CA3AF"
             />
           </View>
+
+          {/* ✅ Receipt Scan Button with Progress */}
+          {/* <View style={styles.scanSection}>
+            <TouchableOpacity
+              style={[
+                styles.scanBtn,
+                !hasFeature('receiptScanning') && styles.scanBtnLocked,
+                scanning && styles.scanBtnScanning
+              ]}
+              onPress={() => {
+                Alert.alert(
+                  '📸 Scan Receipt',
+                  'Choose how to add your receipt',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: '📷 Take Photo', onPress: takeReceiptPhoto },
+                    { text: '🖼️ From Gallery', onPress: scanReceipt },
+                  ]
+                );
+              }}
+              disabled={scanning}
+            >
+              {scanning ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#6366F1" />
+                  <View style={{ marginLeft: 10 }}>
+                    <Text style={[styles.scanBtnText, { fontSize: 13 }]}>
+                      Scanning...
+                    </Text>
+                    {scanProgress && (
+                      <Text style={[styles.scanBtnText, { fontSize: 11, opacity: 0.7, marginTop: 2 }]}>
+                        {scanProgress}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <Ionicons 
+                    name={hasFeature('receiptScanning') ? "scan" : "lock-closed"} 
+                    size={20} 
+                    color={hasFeature('receiptScanning') ? "#6366F1" : "#F59E0B"} 
+                  />
+                  <Text style={[
+                    styles.scanBtnText,
+                    !hasFeature('receiptScanning') && { color: '#F59E0B' }
+                  ]}>
+                    {scannedReceipt ? '✓ Receipt scanned' : 'Scan Receipt'}
+                  </Text>
+                  {!hasFeature('receiptScanning') && (
+                    <View style={styles.proBadge}>
+                      <Text style={styles.proBadgeText}>PRO</Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </TouchableOpacity>
+
+            {scannedReceipt && !scanning && (
+              <View style={styles.scannedPreview}>
+                <Image 
+                  source={{ uri: scannedReceipt }} 
+                  style={styles.scannedThumb} 
+                  resizeMode="cover"
+                />
+                <TouchableOpacity 
+                  style={styles.removeScanned}
+                  onPress={() => {
+                    setScannedReceipt(null);
+                    setScanError(null);
+                  }}
+                >
+                  <Ionicons name="close-circle" size={24} color="#EF4444" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {scanError && (
+              <View style={styles.scanErrorBox}>
+                <Ionicons name="alert-circle" size={16} color="#DC2626" />
+                <Text style={styles.scanErrorText}>{scanError}</Text>
+              </View>
+            )}
+
+            {!scannedReceipt && hasFeature('receiptScanning') && !scanning && (
+              <View style={styles.scanTips}>
+                <Text style={styles.scanTipsTitle}>📸 Tips for best results:</Text>
+                <Text style={styles.scanTip}>• Use good lighting (natural light is best)</Text>
+                <Text style={styles.scanTip}>• Keep receipt flat & centered</Text>
+                <Text style={styles.scanTip}>• Make sure text is clear & readable</Text>
+                <Text style={styles.scanTip}>• Avoid shadows and glare</Text>
+              </View>
+            )}
+          </View> */}
 
           {/* Description */}
           <View style={styles.inputGroup}>
@@ -385,7 +731,7 @@ export default function AddExpenseScreen({ navigation, route }) {
         </View>
       </ScrollView>
 
-      {/* Footer button */}
+      {/* Footer */}
       <View style={styles.footer}>
         <TouchableOpacity
           style={[
@@ -470,6 +816,103 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   amountInput: { flex: 1, fontSize: 48, fontWeight: "bold", color: "#1F2937" },
+  
+  scanSection: {
+    marginBottom: 20,
+  },
+  scanBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#C7D2FE',
+    borderStyle: 'dashed',
+    minHeight: 50,
+  },
+  scanBtnLocked: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FCD34D',
+  },
+  scanBtnScanning: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#D1D5DB',
+    borderStyle: 'solid',
+  },
+  scanBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6366F1',
+    marginLeft: 8,
+  },
+  proBadge: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  proBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  scannedPreview: {
+    marginTop: 12,
+    position: 'relative',
+    alignSelf: 'flex-start',
+  },
+  scannedThumb: {
+    width: 100,
+    height: 130,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#10B981',
+  },
+  removeScanned: {
+    position: 'absolute',
+    top: -10,
+    right: -10,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+  },
+  scanErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginTop: 10,
+    gap: 6,
+  },
+  scanErrorText: {
+    fontSize: 12,
+    color: '#DC2626',
+    flex: 1,
+  },
+  scanTips: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+  },
+  scanTipsTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  scanTip: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  
   inputGroup: { marginBottom: 20 },
   label: {
     fontSize: 16,

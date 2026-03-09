@@ -1,4 +1,3 @@
-// src/screens/GroupScreen.js
 import React, { useState, useEffect, useContext } from "react";
 import {
   View,
@@ -9,12 +8,11 @@ import {
   ActivityIndicator,
   Modal,
   TextInput,
-  Alert,
   KeyboardAvoidingView,
   Platform,
-  StatusBar,
-  Animated,
 } from "react-native";
+import { useConfirm } from "../context/ConfirmContext";
+import Notify from "../utils/notify";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { haptic } from "../utils/haptics";
 import { Ionicons } from "@expo/vector-icons";
@@ -34,20 +32,26 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase.config";
 import { AuthContext } from "../context/AuthContext";
+import { PremiumContext } from "../context/PremiumContext";
+import { usePremiumLimit, LimitIndicator } from "../components/PremiumLimitCheck";
 import * as Contacts from "expo-contacts";
 import GroupChat from "../components/GroupChat";
-// ═══ NEW: Import categories ═══
 import {
   getExpenseIcon,
   detectCategory,
   getCategoryInfo,
   getCategoryColor,
-  EXPENSE_CATEGORIES,
+  dummyCategoryBreakdown,
 } from "../constants/categories";
 
 export default function GroupScreen({ route, navigation }) {
+  const { show, danger, premium } = useConfirm();
+
   const { groupId } = route.params;
   const { user } = useContext(AuthContext);
+  const { hasFeature, isPremium, isFree, getLimit, isAtLimit } = useContext(PremiumContext);
+  const { checkLimit } = usePremiumLimit();
+
   const [group, setGroup] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [settlements, setSettlements] = useState([]);
@@ -70,9 +74,10 @@ export default function GroupScreen({ route, navigation }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [lastReadTimestamp, setLastReadTimestamp] = useState(null);
   const [friendsList, setFriendsList] = useState([]);
-
-  // ═══ NEW: Category filter state ═══
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState(null);
+
+  // Check if analytics feature is available
+  const canUseAnalytics = hasFeature("analytics");
 
   const toDate = (ts) => {
     if (!ts) return new Date(0);
@@ -87,13 +92,15 @@ export default function GroupScreen({ route, navigation }) {
     if (!user) return;
     const loadFriends = async () => {
       try {
-        const friendsRef = collection(db, 'users', user.uid, 'friends');
-        const snap = await getDocs(query(friendsRef, where('status', '==', 'accepted')));
+        const friendsRef = collection(db, "users", user.uid, "friends");
+        const snap = await getDocs(
+          query(friendsRef, where("status", "==", "accepted"))
+        );
         const list = [];
         const promises = [];
         snap.forEach((d) => {
           promises.push(
-            getDoc(doc(db, 'users', d.id)).then((userDoc) => {
+            getDoc(doc(db, "users", d.id)).then((userDoc) => {
               if (userDoc.exists()) {
                 list.push({ id: d.id, ...userDoc.data() });
               }
@@ -103,7 +110,7 @@ export default function GroupScreen({ route, navigation }) {
         await Promise.all(promises);
         setFriendsList(list);
       } catch (e) {
-        console.log('Failed to load friends:', e);
+        console.log("Failed to load friends:", e);
       }
     };
     loadFriends();
@@ -131,13 +138,13 @@ export default function GroupScreen({ route, navigation }) {
           return d.exists()
             ? { id: mid, ...d.data() }
             : { id: mid, email: "Unknown" };
-        }),
+        })
       );
       setMembersData(members);
 
       const expQ = query(
         collection(db, "expenses"),
-        where("groupId", "==", groupId),
+        where("groupId", "==", groupId)
       );
       unsubExpenses = onSnapshot(expQ, (snap) => {
         const list = [];
@@ -148,7 +155,7 @@ export default function GroupScreen({ route, navigation }) {
 
       const settleQ = query(
         collection(db, "settlements"),
-        where("groupId", "==", groupId),
+        where("groupId", "==", groupId)
       );
       unsubConfirmedSettlements = onSnapshot(settleQ, (snap) => {
         const list = [];
@@ -158,7 +165,7 @@ export default function GroupScreen({ route, navigation }) {
 
       const reqQ = query(
         collection(db, "settlementRequests"),
-        where("groupId", "==", groupId),
+        where("groupId", "==", groupId)
       );
       unsubSettlements = onSnapshot(reqQ, (snap) => {
         const reqs = [];
@@ -227,7 +234,7 @@ export default function GroupScreen({ route, navigation }) {
             map[m] = (map[m] || 0) - share;
           });
         }
-      },
+      }
     );
     settlementList.forEach(({ from, to, amount }) => {
       if (from && to) {
@@ -241,53 +248,41 @@ export default function GroupScreen({ route, navigation }) {
   const canDeleteExpense = (expense) => {
     if (expense.paidBy === user.uid) return true;
     if (getMemberRole(user.uid) === "admin") return true;
-    if (getMemberRole(user.uid) === "treasurer") return true;
     return false;
   };
 
   const handleDeleteExpense = (expense) => {
     if (!canDeleteExpense(expense)) {
-      Alert.alert(
-        "Not Allowed",
-        "Only the person who added this expense or a group admin can delete it.",
+      Notify.error(
+        "Only the person who added this expense or a group admin can delete it."
       );
       return;
     }
     const sym = getCurrencySymbol();
-    Alert.alert(
-      "Delete Expense",
+
+    danger(
+      "Delete Expense?",
       `Are you sure you want to delete "${expense.description}" (${sym}${expense.amount.toFixed(2)})?\n\nThis cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setDeletingExpense(true);
-            try {
-              await deleteDoc(doc(db, "expenses", expense.id));
-              setShowExpenseModal(false);
-              setSelectedExpense(null);
-              Alert.alert(
-                "Deleted",
-                "Expense removed. Balances updated automatically.",
-              );
-            } catch (e) {
-              Alert.alert("Error", "Failed to delete expense: " + e.message);
-            } finally {
-              setDeletingExpense(false);
-            }
-          },
-        },
-      ],
+      async () => {
+        setDeletingExpense(true);
+        try {
+          await deleteDoc(doc(db, "expenses", expense.id));
+          setShowExpenseModal(false);
+          setSelectedExpense(null);
+          Notify.success("Expense removed. Balances updated automatically.");
+        } catch (e) {
+          Notify.error("Failed to delete expense");
+        } finally {
+          setDeletingExpense(false);
+        }
+      }
     );
   };
 
   const handleQuickDeleteExpense = (expense) => {
     if (!canDeleteExpense(expense)) {
-      Alert.alert(
-        "Not Allowed",
-        "Only the person who added this expense or a group admin can delete it.",
+      Notify.error(
+        "Only the person who added this expense or a group admin can delete it."
       );
       return;
     }
@@ -301,81 +296,82 @@ export default function GroupScreen({ route, navigation }) {
   };
 
   const handleDeleteGroup = () => {
-    Alert.alert(
-      "Delete Group",
+    danger(
+      "Delete Group?",
       `Are you sure you want to delete "${group?.name}"? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const expSnap = await getDocs(
-                query(
-                  collection(db, "expenses"),
-                  where("groupId", "==", groupId),
-                ),
-              );
-              const batch = writeBatch(db);
-              expSnap.forEach((d) => batch.delete(d.ref));
-              const settleSnap = await getDocs(
-                query(
-                  collection(db, "settlementRequests"),
-                  where("groupId", "==", groupId),
-                ),
-              );
-              settleSnap.forEach((d) => batch.delete(d.ref));
-              batch.delete(doc(db, "groups", groupId));
-              await batch.commit();
-              Alert.alert("Deleted", "Group has been deleted.");
-              navigation.goBack();
-            } catch (e) {
-              Alert.alert("Error", "Failed to delete group: " + e.message);
-            }
-          },
-        },
-      ],
+      async () => {
+        try {
+          const expSnap = await getDocs(
+            query(collection(db, "expenses"), where("groupId", "==", groupId))
+          );
+          const batch = writeBatch(db);
+          expSnap.forEach((d) => batch.delete(d.ref));
+
+          const settleSnap = await getDocs(
+            query(
+              collection(db, "settlementRequests"),
+              where("groupId", "==", groupId)
+            )
+          );
+          settleSnap.forEach((d) => batch.delete(d.ref));
+
+          batch.delete(doc(db, "groups", groupId));
+          await batch.commit();
+
+          navigation.goBack();
+          setTimeout(() => {
+            Notify.success("Group has been deleted successfully! 🗑️");
+          }, 300);
+        } catch (e) {
+          Notify.error("Failed to delete group");
+        }
+      }
     );
   };
 
   const handleLeaveGroup = () => {
-    const myBalance = balances[user.uid] || 0;
-    const hasUnsettled = Math.abs(myBalance) > 0.01;
-
-    const warningMessage = hasUnsettled
-      ? `⚠️ You have an unsettled balance of ${currencySymbol}${Math.abs(myBalance).toFixed(2)}.\n\nLeaving won't clear your debts. Please settle up first.\n\nAre you sure you want to leave "${group?.name}"?`
-      : `Are you sure you want to leave "${group?.name}"?\n\nYou won't be able to see expenses or balances anymore.`;
-
-    Alert.alert("Leave Group", warningMessage, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: hasUnsettled ? "Leave Anyway" : "Leave",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const ref = doc(db, "groups", groupId);
-            await updateDoc(ref, { members: arrayRemove(user.uid) });
-
-            const groupSnap = await getDoc(ref);
-            if (groupSnap.exists()) {
-              const groupData = groupSnap.data();
-              if (groupData.roles && groupData.roles[user.uid]) {
-                const updatedRoles = { ...groupData.roles };
-                delete updatedRoles[user.uid];
-                await updateDoc(ref, { roles: updatedRoles });
-              }
-            }
-
-            Alert.alert("Left Group", `You have left "${group?.name}".`, [
-              { text: "OK", onPress: () => navigation.goBack() },
-            ]);
-          } catch (e) {
-            Alert.alert("Error", "Failed to leave group: " + e.message);
-          }
-        },
+    show({
+      type: "leave",
+      title: "Leave Group?",
+      message: `You will be removed from "${group?.name}".`,
+      confirmText: "Leave",
+      onConfirm: async () => {
+        try {
+          await updateDoc(doc(db, "groups", groupId), {
+            members: arrayRemove(user.uid),
+            memberEmails: arrayRemove(user.email),
+          });
+          navigation.goBack();
+          setTimeout(() => Notify.info("You left the group"), 300);
+        } catch (e) {
+          Notify.error("Failed to leave group: " + e.message);
+        }
       },
-    ]);
+    });
+  };
+
+  const handleAddExpense = () => {
+    const userExpenseCount = expenses.filter(
+      (e) => e.paidBy === user.uid
+    ).length;
+
+    if (!checkLimit("maxExpensesPerGroup", userExpenseCount)) {
+      return;
+    }
+
+    navigation.navigate("AddExpense", {
+      groupId,
+      groupName: group.name,
+    });
+  };
+
+  const handleCategoryFilter = (catKey) => {
+    if (selectedCategoryFilter === catKey) {
+      setSelectedCategoryFilter(null);
+    } else {
+      setSelectedCategoryFilter(catKey);
+    }
+    haptic.light();
   };
 
   const ROLES = [
@@ -413,6 +409,7 @@ export default function GroupScreen({ route, navigation }) {
     if (group?.createdBy === uid) return "admin";
     return group?.roles?.[uid] || "member";
   };
+
   const canManageRoles = () => getMemberRole(user.uid) === "admin";
 
   const handleSetRole = async (uid, role) => {
@@ -423,14 +420,14 @@ export default function GroupScreen({ route, navigation }) {
       setShowRoleModal(false);
       setSelectedMemberForRole(null);
     } catch (e) {
-      Alert.alert("Error", e.message);
+      Notify.error("Failed to update role: " + e.message);
     }
   };
 
   const handlePickFromContacts = async () => {
     const { status } = await Contacts.requestPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Permission Denied", "Allow contacts access in Settings.");
+      Notify.info("Permission Denied. Allow contacts access in Settings.");
       return;
     }
     const { data } = await Contacts.getContactsAsync({
@@ -459,7 +456,7 @@ export default function GroupScreen({ route, navigation }) {
   const handleSearchMember = async () => {
     const input = memberInput.trim().toLowerCase();
     if (!input) {
-      Alert.alert("Error", "Enter an email or phone number");
+      Notify.error("Enter an email or phone number");
       return;
     }
     setFoundUser(null);
@@ -467,16 +464,16 @@ export default function GroupScreen({ route, navigation }) {
     try {
       const field = input.includes("@") ? "email" : "phone";
       const snap = await getDocs(
-        query(collection(db, "users"), where(field, "==", input)),
+        query(collection(db, "users"), where(field, "==", input))
       );
       if (snap.empty) {
-        Alert.alert("Not Found", `No account found with that ${field}.`);
+        Notify.info(`No account found with that ${field}.`);
         setSearchingMember(false);
         return;
       }
       setFoundUser({ id: snap.docs[0].id, ...snap.docs[0].data() });
     } catch (e) {
-      Alert.alert("Error", e.message);
+      Notify.error(e.message);
     } finally {
       setSearchingMember(false);
     }
@@ -485,10 +482,15 @@ export default function GroupScreen({ route, navigation }) {
   const handleConfirmAddMember = async () => {
     if (!foundUser) return;
     if (group.members.includes(foundUser.id)) {
-      Alert.alert("Already a member");
+      Notify.info("This person is already a member");
       setFoundUser(null);
       return;
     }
+
+    if (!checkLimit("maxMembersPerGroup", group.members.length)) {
+      return;
+    }
+
     setAddingMember(true);
     try {
       const ref = doc(db, "groups", groupId);
@@ -502,27 +504,31 @@ export default function GroupScreen({ route, navigation }) {
           return d.exists()
             ? { id: mid, ...d.data() }
             : { id: mid, email: "Unknown" };
-        }),
+        })
       );
       setMembersData(mems);
-      Alert.alert("Done", `${foundUser.name || foundUser.email} added!`);
+      Notify.success(`${foundUser.name || foundUser.email} added!`);
       setShowAddMemberModal(false);
       setMemberInput("");
       setFoundUser(null);
       setContactSuggestions([]);
     } catch (e) {
-      Alert.alert("Error", e.message);
+      Notify.error(e.message);
     } finally {
       setAddingMember(false);
     }
   };
 
-  // Quick add friend directly
   const handleQuickAddFriend = async (friend) => {
     if (group.members.includes(friend.id)) {
-      Alert.alert("Already a member", `${friend.name || friend.email} is already in this group.`);
+      Notify.info(`${friend.name || friend.email} is already in this group.`);
       return;
     }
+
+    if (!checkLimit("maxMembersPerGroup", group.members.length)) {
+      return;
+    }
+
     setAddingMember(true);
     try {
       const ref = doc(db, "groups", groupId);
@@ -536,13 +542,13 @@ export default function GroupScreen({ route, navigation }) {
           return d.exists()
             ? { id: mid, ...d.data() }
             : { id: mid, email: "Unknown" };
-        }),
+        })
       );
       setMembersData(mems);
       haptic.success();
-      Alert.alert("Added! ✓", `${friend.name || friend.email} is now in the group.`);
+      Notify.success(`${friend.name || friend.email} is now in the group.`);
     } catch (e) {
-      Alert.alert("Error", e.message);
+      Notify.error(e.message);
     } finally {
       setAddingMember(false);
     }
@@ -585,7 +591,7 @@ export default function GroupScreen({ route, navigation }) {
             totalShare += amount / splitBetween.length;
           }
         }
-      },
+      }
     );
 
     settlements.forEach(({ from, to, amount }) => {
@@ -599,7 +605,6 @@ export default function GroupScreen({ route, navigation }) {
     return { totalPaid, totalShare, settledTo, totalSettled };
   };
 
-  // ═══ NEW: Category spending breakdown ═══
   const getCategoryBreakdown = () => {
     const catMap = {};
     expenses.forEach((exp) => {
@@ -616,7 +621,6 @@ export default function GroupScreen({ route, navigation }) {
       .sort((a, b) => b.total - a.total);
   };
 
-  // ═══ NEW: Filter expenses by category ═══
   const getFilteredExpenses = () => {
     if (!selectedCategoryFilter) return expenses;
     return expenses.filter((exp) => {
@@ -625,8 +629,9 @@ export default function GroupScreen({ route, navigation }) {
     });
   };
 
-  // Get friends not in group
-  const availableFriends = friendsList.filter((f) => !group?.members?.includes(f.id));
+  const availableFriends = friendsList.filter(
+    (f) => !group?.members?.includes(f.id)
+  );
 
   const myRequests = pendingSettlements.filter((r) => r.to === user.uid);
   const totalExpensesAmt = expenses.reduce((s, e) => s + (e.amount || 0), 0);
@@ -635,6 +640,7 @@ export default function GroupScreen({ route, navigation }) {
   const currencySymbol = getCurrencySymbol();
   const categoryBreakdown = getCategoryBreakdown();
   const filteredExpenses = getFilteredExpenses();
+  const userExpenseCount = expenses.filter((e) => e.paidBy === user.uid).length;
 
   if (loading)
     return (
@@ -650,10 +656,16 @@ export default function GroupScreen({ route, navigation }) {
     );
 
   const isCreator = group.createdBy === user.uid;
+const displayCategoryBreakdown = canUseAnalytics
+  ? categoryBreakdown
+  : dummyCategoryBreakdown;
 
+const displayTotalExpenses = canUseAnalytics
+  ? totalExpensesAmt
+  : dummyCategoryBreakdown.reduce((sum, c) => sum + c.total, 0);
   return (
     <SafeAreaView style={st.root}>
-      {/* ─── Header ─── */}
+      {/* Header */}
       <View style={st.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -684,7 +696,7 @@ export default function GroupScreen({ route, navigation }) {
         </View>
       </View>
 
-      {/* ═══ TAB SWITCHER ═══ */}
+      {/* Tab Switcher */}
       <View style={st.tabBar}>
         <TouchableOpacity
           style={[st.tab, activeTab === "expenses" && st.tabActive]}
@@ -725,7 +737,7 @@ export default function GroupScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* ═══ TAB CONTENT ═══ */}
+      {/* Tab Content */}
       {activeTab === "chat" ? (
         <GroupChat groupId={groupId} membersData={membersData} />
       ) : (
@@ -735,6 +747,7 @@ export default function GroupScreen({ route, navigation }) {
           showsVerticalScrollIndicator={true}
           bounces={true}
         >
+          {/* Settlement Requests Banner */}
           {myRequests.length > 0 && (
             <TouchableOpacity
               style={st.banner}
@@ -754,8 +767,18 @@ export default function GroupScreen({ route, navigation }) {
             </TouchableOpacity>
           )}
 
+          {/* Expense Limit Indicator for Free Users */}
+          {isFree && (
+            <LimitIndicator
+              limitKey="maxExpensesPerGroup"
+              currentCount={userExpenseCount}
+              label={`Your expenses in ${group.name}`}
+            />
+          )}
+
+          {/* Group Summary */}
           <View style={st.summary}>
-            <Text style={{ fontSize: 56 }}>{group.icon || "👥"}</Text>
+            <Text style={{ fontSize: 22 }}>{group.icon || "👥"}</Text>
             <Text style={st.summaryMembers}>
               {group.members.length} members • {expenses.length} expenses
             </Text>
@@ -765,6 +788,7 @@ export default function GroupScreen({ route, navigation }) {
             </Text>
           </View>
 
+          {/* Balance Card */}
           <View style={st.balanceCard}>
             <View style={st.balanceHeader}>
               <Text style={st.balanceLabel}>Your Summary</Text>
@@ -830,10 +854,8 @@ export default function GroupScreen({ route, navigation }) {
             </View>
           </View>
 
-          {/* ═══════════════════════════════════════
-              NEW: CATEGORY SPENDING BREAKDOWN
-              ═══════════════════════════════════════ */}
-          {categoryBreakdown.length > 0 && (
+          {/* ═══ CATEGORY ANALYTICS - PREMIUM ONLY ═══ */}
+          {categoryBreakdown.length > 0 && canUseAnalytics && (
             <View style={st.section}>
               <Text style={st.sectionTitle}>Spending by Category</Text>
               <View style={st.categoryCard}>
@@ -854,12 +876,7 @@ export default function GroupScreen({ route, navigation }) {
                           borderRadius: 10,
                         },
                       ]}
-                      onPress={() => {
-                        setSelectedCategoryFilter(
-                          isFilterActive ? null : cat.key,
-                        );
-                        haptic.light();
-                      }}
+                      onPress={() => handleCategoryFilter(cat.key)}
                       activeOpacity={0.7}
                     >
                       <View style={st.categoryLeft}>
@@ -892,7 +909,6 @@ export default function GroupScreen({ route, navigation }) {
                               </View>
                             )}
                           </View>
-                          {/* Progress bar */}
                           <View style={st.categoryBarBg}>
                             <View
                               style={[
@@ -907,7 +923,9 @@ export default function GroupScreen({ route, navigation }) {
                         </View>
                       </View>
                       <View style={{ alignItems: "flex-end" }}>
-                        <Text style={[st.categoryAmount, { color: cat.color }]}>
+                        <Text
+                          style={[st.categoryAmount, { color: cat.color }]}
+                        >
                           {currencySymbol}
                           {cat.total.toFixed(0)}
                         </Text>
@@ -917,7 +935,6 @@ export default function GroupScreen({ route, navigation }) {
                   );
                 })}
 
-                {/* Clear filter button */}
                 {selectedCategoryFilter && (
                   <TouchableOpacity
                     style={st.clearFilterBtn}
@@ -941,16 +958,105 @@ export default function GroupScreen({ route, navigation }) {
             </View>
           )}
 
+          {/* ═══ CATEGORY ANALYTICS - PREMIUM UPSELL FOR FREE USERS ═══ */}
+          {displayCategoryBreakdown.length > 0 && !canUseAnalytics && (
+            <View style={st.section}>
+              <TouchableOpacity
+                style={st.categoryPremiumCard}
+                onPress={() =>
+                  premium("Category Analytics", () =>
+                    navigation.navigate("Premium")
+                  )
+                }
+                activeOpacity={0.8}
+              >
+                <View style={st.categoryPremiumIcon}>
+                  <Ionicons name="diamond" size={32} color="#F59E0B" />
+                </View>
+
+                <Text style={st.categoryPremiumTitle}>
+                  Unlock Category Analytics
+                </Text>
+                <Text style={st.categoryPremiumDesc}>
+                  See detailed spending breakdown by categories, filter
+                  expenses, and track trends
+                </Text>
+
+                {/* Preview of categories */}
+                <View style={st.categoryPreview}>
+                  {displayCategoryBreakdown.slice(0, 3).map((cat) => (
+                    <View key={cat.key} style={st.categoryPreviewRow}>
+                      <View
+                        style={[
+                          st.categoryPreviewIcon,
+                          { backgroundColor: cat.color + "20" },
+                        ]}
+                      >
+                        <Text style={{ fontSize: 16 }}>{cat.icon}</Text>
+                      </View>
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={st.categoryPreviewName}>{cat.label}</Text>
+                        <View style={st.categoryPreviewBar}>
+                          <View
+                            style={[
+                              st.categoryPreviewBarFill,
+                              {
+                                width: `${((cat.total / totalExpensesAmt) * 100).toFixed(0)}%`,
+                                backgroundColor: cat.color,
+                              },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                      <Text
+                        style={[
+                          st.categoryPreviewAmount,
+                          { color: cat.color },
+                        ]}
+                      >
+                        {currencySymbol}
+                        {cat.total.toFixed(0)}
+                      </Text>
+                    </View>
+                  ))}
+
+                  {categoryBreakdown.length > 3 && (
+                    <View style={st.categoryPreviewMore}>
+                      <Ionicons
+                        name="lock-closed"
+                        size={14}
+                        color="#9CA3AF"
+                        style={{ marginRight: 4 }}
+                      />
+                      <Text style={st.categoryPreviewMoreText}>
+                        +{categoryBreakdown.length - 3} more categories
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={st.categoryPremiumButton}>
+                  <Ionicons
+                    name="diamond"
+                    size={18}
+                    color="#fff"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={st.categoryPremiumButtonText}>
+                    Upgrade to Premium
+                  </Text>
+                </View>
+
+                <Text style={st.categoryPremiumNote}>
+                  Starting at ₹149/month
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Action Buttons */}
           <View style={st.actions}>
-            <TouchableOpacity
-              style={st.btnPrimary}
-              onPress={() =>
-                navigation.navigate("AddExpense", {
-                  groupId,
-                  groupName: group.name,
-                })
-              }
-            >
+            <TouchableOpacity style={st.btnPrimary} onPress={handleAddExpense}>
               <Ionicons
                 name="add-circle"
                 size={20}
@@ -973,8 +1079,25 @@ export default function GroupScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
 
+          {/* Members Section */}
           <View style={st.section}>
-            <Text style={st.sectionTitle}>Members ({membersData.length})</Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <Text style={st.sectionTitle}>
+                Members ({membersData.length})
+              </Text>
+              {isFree && (
+                <Text style={st.memberLimitText}>
+                  {membersData.length}/{getLimit("maxMembersPerGroup")}
+                </Text>
+              )}
+            </View>
             {membersData.map((m) => {
               const role = getMemberRole(m.id);
               const roleInfo = ROLES.find((r) => r.key === role) || ROLES[2];
@@ -1029,7 +1152,7 @@ export default function GroupScreen({ route, navigation }) {
             })}
           </View>
 
-          {/* ═══ EXPENSES LIST (now with category icons + filter) ═══ */}
+          {/* Expenses List */}
           <View style={st.section}>
             <View
               style={{
@@ -1115,12 +1238,11 @@ export default function GroupScreen({ route, navigation }) {
                     shares: "(shares)",
                   }[exp.splitMethod] || "";
 
-                // ═══ NEW: Get category icon and color ═══
                 const expCatKey =
                   exp.category || detectCategory(exp.description);
                 const expCatIcon = getExpenseIcon(
                   exp.description,
-                  exp.category,
+                  exp.category
                 );
                 const expCatColor = getCategoryColor(expCatKey);
                 const expCatInfo = getCategoryInfo(expCatKey);
@@ -1133,7 +1255,6 @@ export default function GroupScreen({ route, navigation }) {
                     activeOpacity={0.7}
                   >
                     <View style={st.expLeft}>
-                      {/* ═══ NEW: Category-colored icon ═══ */}
                       <View
                         style={[
                           st.expIcon,
@@ -1151,7 +1272,6 @@ export default function GroupScreen({ route, navigation }) {
                             : exp.paidByEmail || getMemberName(exp.paidBy)}
                           {dateStr ? `  •  ${dateStr}` : ""}
                         </Text>
-                        {/* ═══ NEW: Category tag ═══ */}
                         <View
                           style={{
                             flexDirection: "row",
@@ -1238,7 +1358,7 @@ export default function GroupScreen({ route, navigation }) {
         </ScrollView>
       )}
 
-      {/* ═══ Expense Detail Modal (updated with category) ═══ */}
+      {/* Expense Detail Modal */}
       <Modal
         visible={showExpenseModal}
         transparent
@@ -1267,7 +1387,7 @@ export default function GroupScreen({ route, navigation }) {
                 detectCategory(selectedExpense.description);
               const modalCatIcon = getExpenseIcon(
                 selectedExpense.description,
-                selectedExpense.category,
+                selectedExpense.category
               );
               const modalCatColor = getCategoryColor(modalCatKey);
               const modalCatInfo = getCategoryInfo(modalCatKey);
@@ -1288,7 +1408,6 @@ export default function GroupScreen({ route, navigation }) {
                   <ScrollView showsVerticalScrollIndicator={false}>
                     <View style={st.expModalInfoCard}>
                       <View style={st.expModalIconRow}>
-                        {/* ═══ NEW: Category icon in modal ═══ */}
                         <View
                           style={[
                             st.expModalBigIcon,
@@ -1305,7 +1424,6 @@ export default function GroupScreen({ route, navigation }) {
                             {currencySymbol}
                             {selectedExpense.amount.toFixed(2)}
                           </Text>
-                          {/* ═══ NEW: Category badge in modal ═══ */}
                           <View
                             style={[
                               st.modalCategoryBadge,
@@ -1346,13 +1464,15 @@ export default function GroupScreen({ route, navigation }) {
                         />
                         <Text style={st.expModalDetailLabel}>Date</Text>
                         <Text style={st.expModalDetailValue}>
-                          {toDate(selectedExpense.createdAt).toLocaleDateString(
-                            "en-IN",
-                            { year: "numeric", month: "long", day: "numeric" },
-                          )}
+                          {toDate(
+                            selectedExpense.createdAt
+                          ).toLocaleDateString("en-IN", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })}
                         </Text>
                       </View>
-                      {/* ═══ NEW: Category row in modal ═══ */}
                       <View style={st.expModalDetailRow}>
                         <Text style={{ fontSize: 18 }}>{modalCatIcon}</Text>
                         <Text style={st.expModalDetailLabel}>Category</Text>
@@ -1488,7 +1608,7 @@ export default function GroupScreen({ route, navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ═══ Add Member Modal (with Quick Add Friends inside) ═══ */}
+      {/* Add Member Modal */}
       <Modal
         visible={showAddMemberModal}
         transparent
@@ -1529,44 +1649,102 @@ export default function GroupScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView 
-              style={{ maxHeight: 450 }} 
+            {/* Member limit indicator */}
+            {isFree && (
+              <View style={st.modalLimitInfo}>
+                <Ionicons
+                  name="people"
+                  size={16}
+                  color="#6B7280"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={st.modalLimitText}>
+                  {membersData.length}/{getLimit("maxMembersPerGroup")} members
+                </Text>
+                {isAtLimit("maxMembersPerGroup", membersData.length) && (
+                  <TouchableOpacity
+                    style={st.modalUpgradeBtn}
+                    onPress={() => {
+                      setShowAddMemberModal(false);
+                      navigation.navigate("Premium");
+                    }}
+                  >
+                    <Ionicons name="diamond" size={12} color="#F59E0B" />
+                    <Text style={st.modalUpgradeBtnText}>Upgrade</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+
+            <ScrollView
+              style={{ maxHeight: 450 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {/* ═══ QUICK ADD FROM FRIENDS SECTION ═══ */}
+              {/* Quick Add from Friends */}
               {availableFriends.length > 0 && !foundUser && (
                 <View style={st.quickAddSection}>
                   <View style={st.quickAddHeader}>
                     <Ionicons name="flash" size={18} color="#6366F1" />
-                    <Text style={st.quickAddTitle}>Quick Add from Friends</Text>
+                    <Text style={st.quickAddTitle}>
+                      Quick Add from Friends
+                    </Text>
                     <View style={st.quickAddBadge}>
-                      <Text style={st.quickAddBadgeText}>{availableFriends.length}</Text>
+                      <Text style={st.quickAddBadgeText}>
+                        {availableFriends.length}
+                      </Text>
                     </View>
                   </View>
-                  
+
                   {availableFriends.slice(0, 5).map((friend) => (
                     <View key={friend.id} style={st.quickAddRow}>
                       <View style={st.quickAddAvatar}>
                         <Text style={st.quickAddAvatarText}>
-                          {(friend.name || friend.email || '?')[0].toUpperCase()}
+                          {(
+                            friend.name ||
+                            friend.email ||
+                            "?"
+                          )[0].toUpperCase()}
                         </Text>
                       </View>
                       <View style={st.quickAddInfo}>
                         <Text style={st.quickAddName} numberOfLines={1}>
-                          {friend.name || 'User'}
+                          {friend.name || "User"}
                         </Text>
                         <Text style={st.quickAddEmail} numberOfLines={1}>
                           {friend.email}
                         </Text>
                       </View>
                       <TouchableOpacity
-                        style={st.quickAddBtn}
+                        style={[
+                          st.quickAddBtn,
+                          isAtLimit("maxMembersPerGroup", membersData.length) &&
+                            st.quickAddBtnDisabled,
+                        ]}
                         onPress={() => handleQuickAddFriend(friend)}
-                        disabled={addingMember}
+                        disabled={
+                          addingMember ||
+                          isAtLimit("maxMembersPerGroup", membersData.length)
+                        }
                       >
                         {addingMember ? (
                           <ActivityIndicator size="small" color="#6366F1" />
+                        ) : isAtLimit(
+                            "maxMembersPerGroup",
+                            membersData.length
+                          ) ? (
+                          <>
+                            <Ionicons
+                              name="lock-closed"
+                              size={14}
+                              color="#9CA3AF"
+                            />
+                            <Text
+                              style={[st.quickAddBtnText, { color: "#9CA3AF" }]}
+                            >
+                              Limit
+                            </Text>
+                          </>
                         ) : (
                           <>
                             <Ionicons name="add" size={16} color="#6366F1" />
@@ -1585,21 +1763,24 @@ export default function GroupScreen({ route, navigation }) {
 
                   <View style={st.quickAddDivider}>
                     <View style={st.quickAddDividerLine} />
-                    <Text style={st.quickAddDividerText}>or search by email/phone</Text>
+                    <Text style={st.quickAddDividerText}>
+                      or search by email/phone
+                    </Text>
                     <View style={st.quickAddDividerLine} />
                   </View>
                 </View>
               )}
 
-              {/* All friends already in group message */}
-              {friendsList.length > 0 && availableFriends.length === 0 && !foundUser && (
-                <View style={st.allFriendsAdded}>
-                  <Text style={{ fontSize: 24 }}>🎉</Text>
-                  <Text style={st.allFriendsAddedText}>
-                    All your friends are already in this group!
-                  </Text>
-                </View>
-              )}
+              {friendsList.length > 0 &&
+                availableFriends.length === 0 &&
+                !foundUser && (
+                  <View style={st.allFriendsAdded}>
+                    <Text style={{ fontSize: 24 }}>🎉</Text>
+                    <Text style={st.allFriendsAddedText}>
+                      All your friends are already in this group!
+                    </Text>
+                  </View>
+                )}
 
               {/* Search section */}
               <View style={st.searchRow}>
@@ -1642,7 +1823,6 @@ export default function GroupScreen({ route, navigation }) {
                 <Text style={st.contactsBtnTxt}>Search from Contacts</Text>
               </TouchableOpacity>
 
-              {/* Contact suggestions */}
               {contactSuggestions.length > 0 && !foundUser && (
                 <View style={{ maxHeight: 160 }}>
                   {contactSuggestions.map((c, i) => (
@@ -1660,7 +1840,13 @@ export default function GroupScreen({ route, navigation }) {
                         </Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, color: "#1F2937", fontWeight: "600" }}>
+                        <Text
+                          style={{
+                            fontSize: 14,
+                            color: "#1F2937",
+                            fontWeight: "600",
+                          }}
+                        >
                           {c.name}
                         </Text>
                         <Text style={{ fontSize: 12, color: "#6B7280" }}>
@@ -1677,7 +1863,6 @@ export default function GroupScreen({ route, navigation }) {
                 </View>
               )}
 
-              {/* Found user preview */}
               {foundUser && (
                 <View style={st.previewCard}>
                   <View style={st.previewHead}>
@@ -1694,7 +1879,11 @@ export default function GroupScreen({ route, navigation }) {
                   <View style={st.previewBody}>
                     <View style={st.previewAvatar}>
                       <Text style={st.previewAvatarTxt}>
-                        {(foundUser.name || foundUser.email || "?")[0].toUpperCase()}
+                        {(
+                          foundUser.name ||
+                          foundUser.email ||
+                          "?"
+                        )[0].toUpperCase()}
                       </Text>
                     </View>
                     <View style={{ flex: 1, marginLeft: 12 }}>
@@ -1706,12 +1895,36 @@ export default function GroupScreen({ route, navigation }) {
                   </View>
                   <View style={st.previewActions}>
                     <TouchableOpacity
-                      style={[st.modalBtn, { flex: 1, flexDirection: "row", marginBottom: 0 }]}
+                      style={[
+                        st.modalBtn,
+                        { flex: 1, flexDirection: "row", marginBottom: 0 },
+                        isAtLimit("maxMembersPerGroup", membersData.length) && {
+                          backgroundColor: "#9CA3AF",
+                        },
+                      ]}
                       onPress={handleConfirmAddMember}
-                      disabled={addingMember}
+                      disabled={
+                        addingMember ||
+                        isAtLimit("maxMembersPerGroup", membersData.length)
+                      }
                     >
                       {addingMember ? (
                         <ActivityIndicator color="#fff" />
+                      ) : isAtLimit(
+                          "maxMembersPerGroup",
+                          membersData.length
+                        ) ? (
+                        <>
+                          <Ionicons
+                            name="lock-closed"
+                            size={18}
+                            color="#fff"
+                            style={{ marginRight: 6 }}
+                          />
+                          <Text style={st.modalBtnTxt}>
+                            Member Limit Reached
+                          </Text>
+                        </>
                       ) : (
                         <>
                           <Ionicons
@@ -1734,6 +1947,26 @@ export default function GroupScreen({ route, navigation }) {
                       <Ionicons name="close" size={20} color="#EF4444" />
                     </TouchableOpacity>
                   </View>
+
+                  {isAtLimit("maxMembersPerGroup", membersData.length) && (
+                    <TouchableOpacity
+                      style={st.limitReachedUpgrade}
+                      onPress={() => {
+                        setShowAddMemberModal(false);
+                        navigation.navigate("Premium");
+                      }}
+                    >
+                      <Ionicons
+                        name="diamond"
+                        size={16}
+                        color="#F59E0B"
+                        style={{ marginRight: 6 }}
+                      />
+                      <Text style={st.limitReachedUpgradeText}>
+                        Upgrade to Premium for unlimited members
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
 
@@ -1747,7 +1980,7 @@ export default function GroupScreen({ route, navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ═══ Role Modal ═══ */}
+      {/* Role Modal */}
       <Modal
         visible={showRoleModal}
         transparent
@@ -1760,7 +1993,9 @@ export default function GroupScreen({ route, navigation }) {
               <View>
                 <Text style={st.modalTitle}>Assign Role</Text>
                 {selectedMemberForRole && (
-                  <Text style={{ fontSize: 13, color: "#6B7280", marginTop: 2 }}>
+                  <Text
+                    style={{ fontSize: 13, color: "#6B7280", marginTop: 2 }}
+                  >
                     {selectedMemberForRole.name || selectedMemberForRole.email}
                   </Text>
                 )}
@@ -1784,21 +2019,35 @@ export default function GroupScreen({ route, navigation }) {
                       backgroundColor: r.color + "10",
                     },
                   ]}
-                  onPress={() => handleSetRole(selectedMemberForRole.id, r.key)}
+                  onPress={() =>
+                    handleSetRole(selectedMemberForRole.id, r.key)
+                  }
                 >
                   <View
-                    style={[st.roleOptionIcon, { backgroundColor: r.color + "20" }]}
+                    style={[
+                      st.roleOptionIcon,
+                      { backgroundColor: r.color + "20" },
+                    ]}
                   >
                     <Ionicons name={r.icon} size={20} color={r.color} />
                   </View>
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={[st.roleOptionLabel, isActive && { color: r.color }]}>
+                    <Text
+                      style={[
+                        st.roleOptionLabel,
+                        isActive && { color: r.color },
+                      ]}
+                    >
                       {r.label}
                     </Text>
                     <Text style={st.roleOptionDesc}>{r.desc}</Text>
                   </View>
                   {isActive && (
-                    <Ionicons name="checkmark-circle" size={22} color={r.color} />
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={22}
+                      color={r.color}
+                    />
                   )}
                 </TouchableOpacity>
               );
@@ -1882,7 +2131,12 @@ const st = StyleSheet.create({
     borderRadius: 12,
   },
   bannerText: { flex: 1, fontSize: 14, color: "#92400E", fontWeight: "500" },
-  summary: { alignItems: "center", paddingVertical: 16 },
+  summary: {
+    alignItems: "center",
+    justifyContent: "space-between",
+    display: "flex",
+    paddingVertical: 4,
+  },
   summaryMembers: { fontSize: 14, color: "#6B7280", marginTop: 6 },
   summaryTotal: { fontSize: 13, color: "#9CA3AF", marginTop: 2 },
   balanceCard: {
@@ -1998,6 +2252,178 @@ const st = StyleSheet.create({
     alignSelf: "flex-start",
   },
   modalCategoryText: { fontSize: 12, fontWeight: "600", marginLeft: 4 },
+
+  // Category premium upsell
+  categoryPremiumCard: {
+    backgroundColor: "#FFFBEB",
+    borderRadius: 16,
+    padding: 20,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#FDE68A",
+  },
+  categoryPremiumIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  categoryPremiumTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#92400E",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  categoryPremiumDesc: {
+    fontSize: 14,
+    color: "#B45309",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 20,
+    paddingHorizontal: 10,
+  },
+  categoryPreview: {
+    width: "100%",
+    backgroundColor: "#FEF3C7",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+    opacity: 0.8,
+  },
+  categoryPreviewRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  categoryPreviewIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  categoryPreviewName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#78350F",
+    marginBottom: 4,
+  },
+  categoryPreviewBar: {
+    height: 4,
+    backgroundColor: "#FDE68A",
+    borderRadius: 2,
+    overflow: "hidden",
+  },
+  categoryPreviewBarFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  categoryPreviewAmount: {
+    fontSize: 14,
+    fontWeight: "700",
+    marginLeft: 10,
+  },
+  categoryPreviewMore: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 4,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#FDE68A",
+  },
+  categoryPreviewMoreText: {
+    fontSize: 12,
+    color: "#78350F",
+    fontWeight: "500",
+  },
+  categoryPremiumButton: {
+    flexDirection: "row",
+    backgroundColor: "#F59E0B",
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+    alignItems: "center",
+    shadowColor: "#F59E0B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  categoryPremiumButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  categoryPremiumNote: {
+    fontSize: 12,
+    color: "#B45309",
+    marginTop: 12,
+  },
+
+  // Member limit text
+  memberLimitText: {
+    fontSize: 12,
+    color: "#6B7280",
+    fontWeight: "500",
+  },
+
+  // Modal limit info
+  modalLimitInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  modalLimitText: {
+    fontSize: 13,
+    color: "#6B7280",
+    fontWeight: "500",
+    flex: 1,
+  },
+  modalUpgradeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    gap: 4,
+  },
+  modalUpgradeBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#F59E0B",
+  },
+  quickAddBtnDisabled: {
+    backgroundColor: "#F3F4F6",
+    borderColor: "#E5E7EB",
+  },
+  limitReachedUpgrade: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFFBEB",
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  limitReachedUpgradeText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#92400E",
+  },
 
   actions: {
     flexDirection: "row",
@@ -2395,7 +2821,7 @@ const st = StyleSheet.create({
     textAlign: "center",
   },
 
-  // ═══ NEW: Quick Add Friends Styles ═══
+  // Quick Add Friends Styles
   quickAddSection: {
     marginBottom: 16,
   },

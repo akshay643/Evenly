@@ -9,7 +9,6 @@ import {
   RefreshControl,
   Modal,
   TextInput,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   
@@ -22,6 +21,8 @@ import { db } from '../../firebase.config';
 import ReminderBanner from '../components/ReminderBanner';
 import useNotifications from '../hooks/useNotifications';
 import { usePremiumLimit } from '../components/PremiumLimitCheck';
+import Notify from '../utils/notify';
+import EmptyDashboard from './EmptyDashboard';
 
 export default function DashboardScreen({ navigation }) {
     useNotifications();  // ← Add this line at the top of the component
@@ -116,7 +117,7 @@ const { checkLimit } = usePremiumLimit();
   if (!checkLimit('maxGroups', createdByMe)) return;
 
     if (!newGroupName.trim()) {
-      Alert.alert('Error', 'Please enter a group name');
+        Notify.error('Please enter a group name');
       return;
     }
 
@@ -136,10 +137,10 @@ const { checkLimit } = usePremiumLimit();
       setNewGroupName('');
       setSelectedIcon('👥');
       setSelectedCurrency('USD');
-      Alert.alert('Success', 'Group created successfully!');
+      Notify.success('Group created successfully!');
     } catch (error) {
       console.error('Error creating group:', error);
-      Alert.alert('Error', 'Failed to create group. Please try again.');
+      Notify.error('Failed to create group. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -165,7 +166,7 @@ const { checkLimit } = usePremiumLimit();
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Evenly</Text>
+        <Text style={styles.headerTitle}>Evynly</Text>
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => navigation.navigate('AddExpense')}
@@ -212,11 +213,7 @@ const { checkLimit } = usePremiumLimit();
         </View>
 
         {groups.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyEmoji}>📱</Text>
-            <Text style={styles.emptyText}>No groups yet</Text>
-            <Text style={styles.emptySubtext}>Create your first group to start splitting bills</Text>
-          </View>
+          <EmptyDashboard onCreateGroup={() => setShowCreateModal(true)} />
         ) : (
           <FlatList
             data={groups}

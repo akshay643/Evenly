@@ -1,42 +1,39 @@
 // src/components/GroupChat.js
-import React, { useState, useEffect, useRef, useContext } from "react";
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import {
   View,
   Text,
+  StyleSheet,
+  FlatList,
   TextInput,
   TouchableOpacity,
-  FlatList,
-  StyleSheet,
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
-  Alert,
-  Image,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  serverTimestamp,
-  limit,
-  doc,
-  getDoc,
-} from "firebase/firestore";
-import { db } from "../../firebase.config";
-import { AuthContext } from "../context/AuthContext";
-import ChatBubble from "./ChatBubble";
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { collection, query, orderBy, limit, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../firebase.config';
+import { AuthContext } from '../context/AuthContext';
+import { PremiumContext } from '../context/PremiumContext';
+import ChatBubble from './ChatBubble';
+import Notify from '../utils/notify';
 
-export default function GroupChat({ groupId, membersData }) {
+export default function GroupChat({ groupId, membersData, navigation }) {
   const { user } = useContext(AuthContext);
+  const { hasFeature, isPremium } = useContext(PremiumContext);
+  
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [messageCount, setMessageCount] = useState(0);
   const flatListRef = useRef(null);
+
+  // ✅ Check if chat is available
+  const isChatEnabled = hasFeature('groupChat');
+  const maxFreeMessages = 20; // Reduced from 100
 
   // Build a quick lookup: uid → name
   const nameMap = {};
@@ -56,9 +53,9 @@ export default function GroupChat({ groupId, membersData }) {
         msgs.push({ id: doc.id, ...doc.data() });
       });
       setMessages(msgs);
+      setMessageCount(msgs.filter(m => m.senderId === user.uid).length);
       setLoading(false);
 
-      // Auto-scroll to bottom
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -70,6 +67,12 @@ export default function GroupChat({ groupId, membersData }) {
   const handleSend = async () => {
     const text = inputText.trim();
     if (!text || sending) return;
+
+    // ✅ Check message limit for free users
+    if (!isPremium && messageCount >= maxFreeMessages) {
+      Notify.warning(`Free limit reached! Upgrade to send unlimited messages.`);
+      return;
+    }
 
     setSending(true);
     try {
@@ -83,7 +86,6 @@ export default function GroupChat({ groupId, membersData }) {
         type: "text",
       };
 
-      // If replying to a message
       if (replyingTo) {
         msgData.replyTo = {
           id: replyingTo.id,
@@ -96,8 +98,7 @@ export default function GroupChat({ groupId, membersData }) {
       await addDoc(msgRef, msgData);
       setInputText("");
     } catch (e) {
-      console.error("Send message error:", e);
-      Alert.alert("Error", "Failed to send message");
+      Notify.error('Failed to send message: ' + e.message);
     } finally {
       setSending(false);
     }
@@ -126,8 +127,7 @@ export default function GroupChat({ groupId, membersData }) {
           dateStr = d.toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
-            year:
-              d.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
+            year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
           });
         }
       }
@@ -165,24 +165,14 @@ export default function GroupChat({ groupId, membersData }) {
     return (
       <TouchableOpacity
         activeOpacity={0.8}
-        onLongPress={() => {
-          setReplyingTo(item);
-        }}
+        onLongPress={() => setReplyingTo(item)}
       >
-        {/* Reply preview */}
         {item.replyTo && (
-          <View
-            style={[
-              st.replyPreview,
-              isMe ? st.replyPreviewMe : st.replyPreviewOther,
-            ]}
-          >
+          <View style={[st.replyPreview, isMe ? st.replyPreviewMe : st.replyPreviewOther]}>
             <View style={st.replyBar} />
             <View style={{ flex: 1 }}>
               <Text style={st.replyName}>{item.replyTo.senderName}</Text>
-              <Text style={st.replyText} numberOfLines={1}>
-                {item.replyTo.text}
-              </Text>
+              <Text style={st.replyText} numberOfLines={1}>{item.replyTo.text}</Text>
             </View>
           </View>
         )}
@@ -196,6 +186,47 @@ export default function GroupChat({ groupId, membersData }) {
     );
   };
 
+  // ✅ Premium Gate - Show upgrade screen for free users
+  if (!isChatEnabled) {
+    return (
+      <View style={st.premiumGate}>
+        <View style={st.premiumGateContent}>
+          <Text style={{ fontSize: 64, marginBottom: 16 }}>💬</Text>
+          <Text style={st.premiumGateTitle}>Group Chat</Text>
+          <Text style={st.premiumGateSubtitle}>Premium Feature</Text>
+          <Text style={st.premiumGateDesc}>
+            Discuss expenses, plan trips, and coordinate with your group members in real-time.
+          </Text>
+          
+          <View style={st.premiumFeaturesList}>
+            <View style={st.premiumFeatureRow}>
+              <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+              <Text style={st.premiumFeatureText}>Unlimited messages</Text>
+            </View>
+            <View style={st.premiumFeatureRow}>
+              <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+              <Text style={st.premiumFeatureText}>Reply to messages</Text>
+            </View>
+            <View style={st.premiumFeatureRow}>
+              <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+              <Text style={st.premiumFeatureText}>Real-time sync</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={st.upgradeBtn}
+            onPress={() => navigation?.navigate('Premium')}
+          >
+            <Ionicons name="diamond" size={20} color="#fff" style={{ marginRight: 8 }} />
+            <Text style={st.upgradeBtnText}>Upgrade for ₹149</Text>
+          </TouchableOpacity>
+          
+          <Text style={st.premiumNote}>One-time payment • Lifetime access</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <View style={st.loadingContainer}>
@@ -208,9 +239,22 @@ export default function GroupChat({ groupId, membersData }) {
   return (
     <KeyboardAvoidingView
       style={st.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 60}
     >
+      {/* ✅ Free user message limit warning */}
+      {!isPremium && (
+        <View style={st.limitBanner}>
+          <Ionicons name="chatbubbles-outline" size={16} color="#D97706" />
+          <Text style={st.limitBannerText}>
+            {maxFreeMessages - messageCount} messages left
+          </Text>
+          <TouchableOpacity onPress={() => navigation?.navigate('Premium')}>
+            <Text style={st.limitBannerLink}>Upgrade →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Messages list */}
       {messages.length === 0 ? (
         <View style={st.emptyContainer}>
@@ -243,19 +287,13 @@ export default function GroupChat({ groupId, membersData }) {
           <View style={st.replyIndicatorBar} />
           <View style={{ flex: 1 }}>
             <Text style={st.replyIndicatorName}>
-              Replying to{" "}
-              {replyingTo.senderId === user.uid
-                ? "yourself"
-                : replyingTo.senderName}
+              Replying to {replyingTo.senderId === user.uid ? "yourself" : replyingTo.senderName}
             </Text>
             <Text style={st.replyIndicatorText} numberOfLines={1}>
               {replyingTo.text}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={() => setReplyingTo(null)}
-            style={st.replyIndicatorClose}
-          >
+          <TouchableOpacity onPress={() => setReplyingTo(null)} style={st.replyIndicatorClose}>
             <Ionicons name="close" size={18} color="#6B7280" />
           </TouchableOpacity>
         </View>
@@ -266,22 +304,27 @@ export default function GroupChat({ groupId, membersData }) {
         <View style={st.inputWrapper}>
           <TextInput
             style={st.textInput}
-            placeholder="Type a message..."
+            placeholder={
+              !isPremium && messageCount >= maxFreeMessages
+                ? "Upgrade to send more..."
+                : "Type a message..."
+            }
             placeholderTextColor="#9CA3AF"
             value={inputText}
             onChangeText={setInputText}
             multiline
             maxLength={1000}
             returnKeyType="default"
+            editable={isPremium || messageCount < maxFreeMessages}
           />
         </View>
         <TouchableOpacity
           style={[
             st.sendBtn,
-            (!inputText.trim() || sending) && st.sendBtnDisabled,
+            (!inputText.trim() || sending || (!isPremium && messageCount >= maxFreeMessages)) && st.sendBtnDisabled,
           ]}
           onPress={handleSend}
-          disabled={!inputText.trim() || sending}
+          disabled={!inputText.trim() || sending || (!isPremium && messageCount >= maxFreeMessages)}
         >
           {sending ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -295,177 +338,252 @@ export default function GroupChat({ groupId, membersData }) {
 }
 
 const st = StyleSheet.create({
-  container: {
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+  
+  // Premium Gate Styles
+  premiumGate: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: '#F9FAFB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
+  premiumGateContent: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 32,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  premiumGateTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  premiumGateSubtitle: {
+    fontSize: 14,
+    color: '#F59E0B',
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  premiumGateDesc: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  premiumFeaturesList: {
+    width: '100%',
+    marginBottom: 24,
+  },
+  premiumFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  premiumFeatureText: {
+    fontSize: 14,
+    color: '#374151',
+    marginLeft: 10,
+  },
+  upgradeBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#F59E0B',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  upgradeBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  premiumNote: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 12,
+  },
+
+  // Limit Banner
+  limitBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  limitBannerText: {
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '500',
+  },
+  limitBannerLink: {
+    fontSize: 13,
+    color: '#D97706',
+    fontWeight: '700',
+  },
+
+  // Existing styles...
   loadingContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#fff",
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: "#6B7280",
+    color: '#6B7280',
   },
-
-  /* ── Empty state ── */
+  messagesList: {
+    padding: 16,
+    paddingBottom: 8,
+  },
   emptyContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
   },
   emptyTitle: {
     fontSize: 18,
-    fontWeight: "700",
-    color: "#1F2937",
-    marginBottom: 6,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
   },
   emptyBody: {
     fontSize: 14,
-    color: "#6B7280",
-    textAlign: "center",
+    color: '#6B7280',
+    textAlign: 'center',
     lineHeight: 20,
   },
-
-  /* ── Messages list ── */
-  messagesList: {
-    paddingVertical: 10,
-    paddingBottom: 10,
-  },
-
-  /* ── Date divider ── */
   dateDivider: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 14,
-    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 16,
   },
   dateLine: {
     flex: 1,
     height: 1,
-    backgroundColor: "#E5E7EB",
+    backgroundColor: '#E5E7EB',
   },
   dateText: {
     fontSize: 12,
-    color: "#9CA3AF",
-    fontWeight: "600",
+    color: '#9CA3AF',
     marginHorizontal: 12,
-    backgroundColor: "#fff",
-    paddingHorizontal: 8,
+    fontWeight: '500',
   },
-
-  /* ── Reply preview (inside bubble) ── */
   replyPreview: {
-    flexDirection: "row",
-    marginHorizontal: 12,
-    marginBottom: -4,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: "#F3F4F6",
-    maxWidth: "75%",
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 8,
+    marginBottom: 4,
+    marginHorizontal: 40,
   },
   replyPreviewMe: {
-    alignSelf: "flex-end",
-    backgroundColor: "#4F46E5",
+    marginLeft: 60,
+    marginRight: 8,
   },
   replyPreviewOther: {
-    alignSelf: "flex-start",
-    marginLeft: 48,
+    marginLeft: 8,
+    marginRight: 60,
   },
   replyBar: {
     width: 3,
+    backgroundColor: '#6366F1',
     borderRadius: 2,
-    backgroundColor: "#6366F1",
     marginRight: 8,
   },
   replyName: {
     fontSize: 11,
-    fontWeight: "700",
-    color: "#6366F1",
+    fontWeight: '600',
+    color: '#6366F1',
+    marginBottom: 2,
   },
   replyText: {
     fontSize: 12,
-    color: "#6B7280",
+    color: '#6B7280',
   },
-
-  /* ── Reply indicator (above input) ── */
   replyIndicator: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#EEF2FF",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: '#E5E7EB',
   },
   replyIndicatorBar: {
     width: 3,
-    height: "100%",
-    minHeight: 30,
+    height: 32,
+    backgroundColor: '#6366F1',
     borderRadius: 2,
-    backgroundColor: "#6366F1",
     marginRight: 10,
   },
   replyIndicatorName: {
     fontSize: 12,
-    fontWeight: "700",
-    color: "#6366F1",
+    fontWeight: '600',
+    color: '#6366F1',
   },
   replyIndicatorText: {
     fontSize: 13,
-    color: "#6B7280",
-    marginTop: 1,
+    color: '#4B5563',
   },
   replyIndicatorClose: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
+    padding: 4,
     marginLeft: 8,
   },
-
-  /* ── Input bar ── */
   inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
+    flexDirection: 'row',
+    alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#fff",
+    backgroundColor: '#fff',
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: '#E5E7EB',
   },
   inputWrapper: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 22,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: Platform.OS === "ios" ? 10 : 4,
-    maxHeight: 120,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    paddingVertical: 10,
+    marginRight: 10,
+    maxHeight: 100,
   },
   textInput: {
-    fontSize: 16,
-    color: "#1F2937",
-    maxHeight: 100,
+    fontSize: 15,
+    color: '#1F2937',
+    maxHeight: 80,
   },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#6366F1",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
+    backgroundColor: '#6366F1',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sendBtnDisabled: {
-    backgroundColor: "#C7D2FE",
+    backgroundColor: '#D1D5DB',
   },
 });

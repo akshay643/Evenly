@@ -1,4 +1,4 @@
-package com.evenly.app
+package com.evynly.app
 
 import android.app.Application
 import android.content.res.Configuration

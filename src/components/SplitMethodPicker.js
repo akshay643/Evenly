@@ -1,5 +1,5 @@
 // src/components/SplitMethodPicker.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useContext } from "react";
 import {
   View,
   Text,
@@ -7,9 +7,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { PremiumContext } from "../context/PremiumContext";
+import { useNavigation } from "@react-navigation/native";
+import { useConfirm } from "../context/ConfirmContext";
+import Notify from "../utils/notify";
 
 export default function SplitMethodPicker({
   members,
@@ -20,10 +23,17 @@ export default function SplitMethodPicker({
   onSelectedMembersChange,
   onSplitDataChange,
 }) {
+  const { hasFeature, isPremium } = useContext(PremiumContext);
+  const navigation = useNavigation();
+  const { premium } = useConfirm();  // ← Using useConfirm hook
+  
   const [method, setMethod] = useState("equal");
   const [exactAmounts, setExactAmounts] = useState({});
   const [percentages, setPercentages] = useState({});
   const [shares, setShares] = useState({});
+
+  // Check if advanced splits are available
+  const canUseAdvancedSplits = hasFeature("advancedSplits");
 
   const METHODS = [
     {
@@ -31,26 +41,46 @@ export default function SplitMethodPicker({
       label: "Equal",
       icon: "git-compare-outline",
       desc: "Split equally",
+      premium: false,
     },
     {
       key: "exact",
       label: "Exact",
       icon: "cash-outline",
       desc: "Enter amounts",
+      premium: true,
     },
     {
       key: "percentage",
       label: "Percent",
       icon: "pie-chart-outline",
       desc: "By percentage",
+      premium: true,
     },
     {
       key: "shares",
       label: "Shares",
       icon: "layers-outline",
       desc: "By ratio",
+      premium: true,
     },
   ];
+
+  // Handle method selection with premium check
+  const handleMethodSelect = (methodKey) => {
+    const methodInfo = METHODS.find(m => m.key === methodKey);
+    
+    // If it's a premium method and user doesn't have access
+    if (methodInfo?.premium && !canUseAdvancedSplits) {
+      premium(
+        `${methodInfo.label} split`,
+        () => navigation.navigate("Premium")
+      );
+      return;
+    }
+    
+    setMethod(methodKey);
+  };
 
   // Reset inputs when members change
   useEffect(() => {
@@ -166,7 +196,7 @@ export default function SplitMethodPicker({
   const toggleMember = (uid) => {
     if (selectedMembers.includes(uid)) {
       if (selectedMembers.length <= 1) {
-        Alert.alert("Error", "At least one person must be in the split");
+        Notify.error("At least one person must be in the split");
         return;
       }
       onSelectedMembersChange(selectedMembers.filter((id) => id !== uid));
@@ -192,6 +222,7 @@ export default function SplitMethodPicker({
       ).toFixed(2);
     }
     setExactAmounts(newAmounts);
+    Notify.success("Split distributed equally");
   };
 
   // Auto-distribute remaining for percentages
@@ -210,6 +241,7 @@ export default function SplitMethodPicker({
       );
     }
     setPercentages(newPcts);
+    Notify.success("Percentages distributed equally");
   };
 
   // Calculate what each person's amount is (for display)
@@ -244,39 +276,78 @@ export default function SplitMethodPicker({
         showsHorizontalScrollIndicator={false}
         style={st.methodScroll}
       >
-        {METHODS.map((m) => (
-          <TouchableOpacity
-            key={m.key}
-            style={[st.methodChip, method === m.key && st.methodChipActive]}
-            onPress={() => setMethod(m.key)}
-          >
-            <Ionicons
-              name={m.icon}
-              size={16}
-              color={method === m.key ? "#fff" : "#6366F1"}
-              style={{ marginRight: 5 }}
-            />
-            <View>
-              <Text
-                style={[
-                  st.methodChipLabel,
-                  method === m.key && st.methodChipLabelActive,
-                ]}
-              >
-                {m.label}
-              </Text>
-              <Text
-                style={[
-                  st.methodChipDesc,
-                  method === m.key && { color: "rgba(255,255,255,0.7)" },
-                ]}
-              >
-                {m.desc}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
+        {METHODS.map((m) => {
+          const isLocked = m.premium && !canUseAdvancedSplits;
+          const isSelected = method === m.key;
+          
+          return (
+            <TouchableOpacity
+              key={m.key}
+              style={[
+                st.methodChip, 
+                isSelected && st.methodChipActive,
+                isLocked && st.methodChipLocked,
+              ]}
+              onPress={() => handleMethodSelect(m.key)}
+            >
+              <Ionicons
+                name={m.icon}
+                size={16}
+                color={isSelected ? "#fff" : isLocked ? "#9CA3AF" : "#6366F1"}
+                style={{ marginRight: 5 }}
+              />
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Text
+                    style={[
+                      st.methodChipLabel,
+                      isSelected && st.methodChipLabelActive,
+                      isLocked && st.methodChipLabelLocked,
+                    ]}
+                  >
+                    {m.label}
+                  </Text>
+                  {/* Premium badge */}
+                  {isLocked && (
+                    <View style={st.premiumBadge}>
+                      <Ionicons name="diamond" size={10} color="#F59E0B" />
+                    </View>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    st.methodChipDesc,
+                    isSelected && { color: "rgba(255,255,255,0.7)" },
+                    isLocked && { color: "#D1D5DB" },
+                  ]}
+                >
+                  {m.desc}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
+
+      {/* ═══ Premium upsell banner ═══ */}
+      {!canUseAdvancedSplits && (
+        <TouchableOpacity 
+          style={st.premiumBanner}
+          onPress={() => navigation.navigate("Premium")}
+          activeOpacity={0.7}
+        >
+          <View style={st.premiumBannerIcon}>
+            <Ionicons name="diamond" size={18} color="#F59E0B" />
+          </View>
+          <View style={st.premiumBannerContent}>
+            <Text style={st.premiumBannerTitle}>Unlock Advanced Splits</Text>
+            <Text style={st.premiumBannerDesc}>
+              Exact, Percentage & Share splits with Premium
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#F59E0B" />
+        </TouchableOpacity>
+      )}
 
       {/* ═══ Quick actions ═══ */}
       <View style={st.quickRow}>
@@ -328,7 +399,7 @@ export default function SplitMethodPicker({
         </TouchableOpacity>
 
         {/* Auto-distribute button for exact/percentage */}
-        {(method === "exact" || method === "percentage") && (
+        {(method === "exact" || method === "percentage") && canUseAdvancedSplits && (
           <TouchableOpacity
             style={[st.quickPill, { borderColor: "#10B981" }]}
             onPress={
@@ -632,7 +703,7 @@ const st = StyleSheet.create({
   },
 
   /* Method chips */
-  methodScroll: { marginBottom: 14 },
+  methodScroll: { marginBottom: 10 },
   methodChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -649,16 +720,65 @@ const st = StyleSheet.create({
     backgroundColor: "#6366F1",
     borderColor: "#6366F1",
   },
+  methodChipLocked: {
+    backgroundColor: "#F9FAFB",
+    borderColor: "#E5E7EB",
+  },
   methodChipLabel: {
     fontSize: 13,
     fontWeight: "700",
     color: "#6366F1",
   },
   methodChipLabelActive: { color: "#fff" },
+  methodChipLabelLocked: { color: "#9CA3AF" },
   methodChipDesc: {
     fontSize: 10,
     color: "#9CA3AF",
     marginTop: 1,
+  },
+
+  /* Premium badge on method chip */
+  premiumBadge: {
+    backgroundColor: "#FFFBEB",
+    borderRadius: 6,
+    padding: 2,
+    marginLeft: 4,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+
+  /* Premium upsell banner */
+  premiumBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "#FDE68A",
+    marginBottom: 12,
+  },
+  premiumBannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#FEF3C7",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  premiumBannerContent: {
+    flex: 1,
+  },
+  premiumBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#92400E",
+    marginBottom: 2,
+  },
+  premiumBannerDesc: {
+    fontSize: 12,
+    color: "#B45309",
   },
 
   /* Quick actions */

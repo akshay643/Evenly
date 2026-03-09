@@ -276,7 +276,7 @@ export default function AuthScreen() {
         setShowVerification(false);
         setVerificationEmail("");
         setVerificationPassword("");
-        Alert.alert("Success! 🎉", "Your email is verified. Welcome to Evenly!");
+        Alert.alert("Success! 🎉", "Your email is verified. Welcome to Evynly!");
       } else {
         await signOut(auth);
         Alert.alert("Not Verified Yet", "Please click the link in the email we sent you.");
@@ -384,7 +384,7 @@ export default function AuthScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.innerContainer}>
           <Text style={styles.logo}>💰</Text>
-          <Text style={styles.title}>Evenly</Text>
+          <Text style={styles.title}>Evynly</Text>
           <Text style={styles.subtitle}>Split bills fairly</Text>
 
           {isIOS ? (

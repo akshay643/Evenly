@@ -6,13 +6,17 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
   RefreshControl,
   Image,
   Modal as RNModal,
 } from "react-native";
+import { Linking, Share } from "react-native";
+
 import { Ionicons } from "@expo/vector-icons";
 import { AuthContext } from "../context/AuthContext";
+import { useConfirm } from "../context/ConfirmContext";
+import { PremiumContext } from "../context/PremiumContext";
+import Notify from "../utils/notify";
 import {
   doc,
   getDoc,
@@ -36,6 +40,7 @@ import {
   NotificationTemplates,
 } from "../services/notificationService";
 import { haptic } from "../utils/haptics";
+import PaymentInfoCard from "../components/PaymentInfoCard";
 
 /* ================================================================
    SettleUpScreen — Splitwise-style optimised settlements
@@ -43,21 +48,24 @@ import { haptic } from "../utils/haptics";
 export default function SettleUpScreen({ route, navigation }) {
   const { groupId } = route.params;
   const { user } = useContext(AuthContext);
+  const { show, confirm } = useConfirm();
+  const { hasFeature } = useContext(PremiumContext);
 
   const [group, setGroup] = useState(null);
-  const [membersMap, setMembersMap] = useState({}); // { uid → { id, name, email } }
+  const [membersMap, setMembersMap] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [confirmedSettlements, setConfirmedSettlements] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [optimised, setOptimised] = useState([]); // minimised transactions
-  const [netBalances, setNetBalances] = useState({}); // per-member net balance
+  const [optimised, setOptimised] = useState([]);
+  const [netBalances, setNetBalances] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [proofPhotoUri, setProofPhotoUri] = useState(null);
   const [viewingProof, setViewingProof] = useState(null);
-  const [uploadingProof, setUploadingProof] = useState(false); // upload progress overlay
+  const [uploadingProof, setUploadingProof] = useState(false);
+  const [paymentInfoMember, setPaymentInfoMember] = useState(null); // { memberData, amount }
 
   /* ── helpers ────────────────────────────────────── */
   const toDate = (ts) => {
@@ -67,11 +75,81 @@ export default function SettleUpScreen({ route, navigation }) {
     if (typeof ts === "number") return new Date(ts);
     return new Date(ts);
   };
+
   const fmtDate = (ts) => {
     const d = toDate(ts);
     return d.getTime() > 0
       ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
       : "";
+  };
+  const generateUPILink = (
+    upiId,
+    name,
+    amount,
+    note = "Settlement via SplitBill",
+  ) => {
+    if (!upiId) return null;
+    return `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(name)}&am=${amount.toFixed(2)}&cu=INR&tn=${encodeURIComponent(note)}`;
+  };
+  const openUPIPayment = async (upiId, name, amount) => {
+    const upiLink = generateUPILink(upiId, name, amount);
+    if (!upiLink) {
+      Notify.warning(
+        "No UPI ID available. Ask them to add it in their profile.",
+      );
+      return;
+    }
+
+    try {
+      const canOpen = await Linking.canOpenURL(upiLink);
+      if (canOpen) {
+        await Linking.openURL(upiLink);
+        haptic.success();
+      } else {
+        // Fallback: Show UPI ID to copy
+        confirm(
+          "Pay via UPI",
+          `Send ₹${amount.toFixed(2)} to:\n\n${upiId}\n\nCopy this UPI ID and pay using any UPI app.`,
+          () => {
+            haptic.success();
+            Notify.success("UPI ID copied!");
+          },
+          () => {
+            haptic.success();
+            Clipboard.setString(upiId);
+            Notify.success("UPI ID copied!");
+          },
+        );
+      }
+    } catch (e) {
+      Notify.error("Could not open UPI app: " + e.message);
+    }
+  };
+
+  const shareViaWhatsApp = async (toName, amount, sym) => {
+    const message = `Hey ${toName}! 👋
+
+I just paid you ${sym}${amount.toFixed(2)} 💸
+
+Please confirm the payment in SplitBill app:
+https://play.google.com/store/apps/details?id=YOUR_APP_ID
+
+Thanks! 🙏`;
+
+    const whatsappUrl = `whatsapp://send?text=${encodeURIComponent(message)}`;
+
+    try {
+      const canOpen = await Linking.canOpenURL(whatsappUrl);
+      if (canOpen) {
+        await Linking.openURL(whatsappUrl);
+      } else {
+        // Fallback to regular share
+        await Share.share({ message });
+      }
+    } catch (e) {
+      // Fallback to regular share
+      await Share.share({ message });
+    }
   };
   const getCurrencySymbol = useCallback(() => {
     const map = {
@@ -85,15 +163,15 @@ export default function SettleUpScreen({ route, navigation }) {
     };
     return map[group?.currency] || "₹";
   }, [group]);
+
   const memberName = (uid) => {
     const m = membersMap[uid];
     return m?.name || m?.email || "Unknown";
   };
 
-  /* ── loadAll — single function to fetch everything ── */
+  /* ── loadAll ── */
   const loadAll = useCallback(async () => {
     try {
-      // 1 — group
       const gDoc = await getDoc(doc(db, "groups", groupId));
       if (!gDoc.exists()) {
         setLoading(false);
@@ -102,7 +180,6 @@ export default function SettleUpScreen({ route, navigation }) {
       const gData = { id: gDoc.id, ...gDoc.data() };
       setGroup(gData);
 
-      // 2 — members
       const mMap = {};
       for (const mid of gData.members) {
         const d = await getDoc(doc(db, "users", mid));
@@ -112,7 +189,6 @@ export default function SettleUpScreen({ route, navigation }) {
       }
       setMembersMap(mMap);
 
-      // 3 — expenses
       const expSnap = await getDocs(
         query(collection(db, "expenses"), where("groupId", "==", groupId)),
       );
@@ -120,7 +196,6 @@ export default function SettleUpScreen({ route, navigation }) {
       expSnap.forEach((d) => exps.push({ id: d.id, ...d.data() }));
       setExpenses(exps);
 
-      // 4 — confirmed settlements
       const setSnap = await getDocs(
         query(collection(db, "settlements"), where("groupId", "==", groupId)),
       );
@@ -128,7 +203,6 @@ export default function SettleUpScreen({ route, navigation }) {
       setSnap.forEach((d) => sets.push({ id: d.id, ...d.data() }));
       setConfirmedSettlements(sets);
 
-      // 5 — compute optimised plan
       const memberIds = gData.members;
       const net = calcNetBalances(exps, sets, memberIds);
       setNetBalances(net);
@@ -139,16 +213,15 @@ export default function SettleUpScreen({ route, navigation }) {
       setRefreshing(false);
     } catch (e) {
       console.error("SettleUp load error:", e);
+      Notify.error("Failed to load settlement data");
       setLoading(false);
       setRefreshing(false);
     }
   }, [groupId]);
 
-  /* ── init + realtime pending requests ── */
   useEffect(() => {
     loadAll();
 
-    // Listen to pending requests in realtime
     const rq = query(
       collection(db, "settlementRequests"),
       where("groupId", "==", groupId),
@@ -165,7 +238,6 @@ export default function SettleUpScreen({ route, navigation }) {
     return () => unsub();
   }, [groupId, loadAll]);
 
-  /* ── pull-to-refresh ── */
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadAll();
@@ -174,19 +246,13 @@ export default function SettleUpScreen({ route, navigation }) {
   /* ================================================================
      Actions
      ================================================================ */
-
-  /** Check if there's already a pending request from→to for this amount */
   const hasPendingRequest = (fromId, toId) =>
     pendingRequests.some((r) => r.from === fromId && r.to === toId);
 
-  /* ── pick payment proof photo ── */
   const pickProofPhoto = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission needed",
-        "Allow photo access to attach payment proof.",
-      );
+      Notify.warning("Please allow photo access to attach payment proof");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -198,13 +264,14 @@ export default function SettleUpScreen({ route, navigation }) {
     });
     if (!result.canceled && result.assets?.[0]) {
       setProofPhotoUri(result.assets[0].uri);
+      Notify.success("Photo attached! 📸");
     }
   };
 
   const takeProofPhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Permission needed", "Allow camera access to take a photo.");
+      Notify.warning("Please allow camera access to take a photo");
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -215,183 +282,191 @@ export default function SettleUpScreen({ route, navigation }) {
     });
     if (!result.canceled && result.assets?.[0]) {
       setProofPhotoUri(result.assets[0].uri);
+      Notify.success("Photo captured! 📸");
     }
   };
 
   const handleAttachProof = () => {
-    Alert.alert("Attach Payment Proof", "Choose a source", [
-      { text: "Camera", onPress: takeProofPhoto },
-      { text: "Gallery", onPress: pickProofPhoto },
-      { text: "Cancel", style: "cancel" },
-    ]);
+    if (!hasFeature("paymentProof")) {
+      show({
+        type: "warning",
+        title: "⭐ Pro Feature",
+        message:
+          "Attaching payment proof with cloud storage is a Pro feature. Upgrade to add photo evidence to your settlements.",
+        confirmText: "Upgrade",
+        cancelText: "Maybe Later",
+        onConfirm: () => navigation.navigate("Premium"),
+      });
+      return;
+    }
+    show({
+      type: "info",
+      title: "Attach Payment Proof",
+      message: "Choose how you want to add your payment proof",
+      confirmText: "📷 Camera",
+      cancelText: "🖼️ Gallery",
+      onConfirm: takeProofPhoto,
+      onCancel: pickProofPhoto,
+    });
   };
 
   const sendSettlementRequest = async (toId, amount) => {
     const toUser = membersMap[toId];
     const fromUser = membersMap[user.uid];
+
     if (!toUser || !fromUser) {
-      Alert.alert("Error", "User data not found");
+      Notify.error("User data not found");
       return;
     }
 
-    // Prevent duplicate requests
     if (hasPendingRequest(user.uid, toId)) {
-      Alert.alert(
-        "Already Sent",
-        `You already have a pending settlement request to ${memberName(toId)}. Wait for them to confirm or reject it first.`,
+      Notify.warning(
+        `You already have a pending request to ${memberName(toId)}. Please wait for confirmation.`,
       );
       return;
     }
 
     const sym = getCurrencySymbol();
-    Alert.alert(
-      "Send Settlement Request",
-      `Send ${sym}${amount.toFixed(2)} to ${memberName(toId)}?\n\nThey'll need to confirm receipt.${
-        proofPhotoUri ? "\n\n📸 Payment proof attached." : ""
-      }`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Send",
-          onPress: async () => {
-            setProcessing(true);
-            try {
-              // Upload proof photo to Firebase Storage (if attached)
-              let uploadedPhotoUrl = null;
-              if (proofPhotoUri) {
-                setUploadingProof(true);
-                // Use XMLHttpRequest — React Native's fetch().blob() is incompatible with Firebase Storage
-                const blob = await new Promise((resolve, reject) => {
-                  const xhr = new XMLHttpRequest();
-                  xhr.onload = () => resolve(xhr.response);
-                  xhr.onerror = () =>
-                    reject(new Error("Failed to read photo file"));
-                  xhr.responseType = "blob";
-                  xhr.open("GET", proofPhotoUri, true);
-                  xhr.send(null);
-                });
-                const photoRef = ref(
-                  storage,
-                  `settlement-proofs/${groupId}/${user.uid}_${Date.now()}.jpg`,
-                );
-                await uploadBytes(photoRef, blob);
-                uploadedPhotoUrl = await getDownloadURL(photoRef);
-                blob.close?.(); // free memory
-                setUploadingProof(false);
-              }
+    const message = `Send ${sym}${amount.toFixed(2)} to ${memberName(toId)}?\n\nThey'll need to confirm receipt.${
+      proofPhotoUri ? "\n\n📸 Payment proof attached" : ""
+    }`;
 
-              await addDoc(collection(db, "settlementRequests"), {
-                groupId,
-                from: user.uid,
-                fromName: fromUser.name || fromUser.email || "Unknown",
-                to: toId,
-                toName: toUser.name || toUser.email || "Unknown",
-                amount: parseFloat(amount.toFixed(2)),
-                status: "pending",
-                createdAt: Date.now(),
-                proofPhotoUri: uploadedPhotoUrl,
-              });
-              const recipientDoc = await getDoc(doc(db, "users", toId));
-              const recipientData = recipientDoc.data();
-              if (recipientData?.pushToken) {
-                const template = NotificationTemplates.settlementRequest(
-                  fromUser.name || fromUser.email,
-                  amount,
-                  getCurrencySymbol(),
-                );
-                await sendPushNotification(recipientData.pushToken, {
-                  ...template,
-                  data: { ...template.data, groupId },
-                });
-              }
+    show({
+      type: "confirm",
+      title: "Send Settlement Request",
+      message: message,
+      confirmText: "Send",
+      cancelText: "Cancel",
+      icon: "paper-plane", // Explicitly set the icon
+      onConfirm: async () => {
+        setProcessing(true);
+        try {
+          let uploadedPhotoUrl = null;
 
-              setProofPhotoUri(null);
-              Alert.alert(
-                "Sent!",
-                `Waiting for ${memberName(toId)} to confirm.`,
-              );
-              await loadAll(); // ← auto-refresh
-            } catch (e) {
-              setUploadingProof(false);
-              Alert.alert("Error", e.message);
-            } finally {
-              setProcessing(false);
-            }
-          },
-        },
-      ],
-    );
+          if (proofPhotoUri) {
+            setUploadingProof(true);
+            const blob = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.onload = () => resolve(xhr.response);
+              xhr.onerror = () =>
+                reject(new Error("Failed to read photo file"));
+              xhr.responseType = "blob";
+              xhr.open("GET", proofPhotoUri, true);
+              xhr.send(null);
+            });
+
+            const photoRef = ref(
+              storage,
+              `settlement-proofs/${groupId}/${user.uid}_${Date.now()}.jpg`,
+            );
+            await uploadBytes(photoRef, blob);
+            uploadedPhotoUrl = await getDownloadURL(photoRef);
+            blob.close?.();
+            setUploadingProof(false);
+          }
+
+          await addDoc(collection(db, "settlementRequests"), {
+            groupId,
+            from: user.uid,
+            fromName: fromUser.name || fromUser.email || "Unknown",
+            to: toId,
+            toName: toUser.name || toUser.email || "Unknown",
+            amount: parseFloat(amount.toFixed(2)),
+            status: "pending",
+            createdAt: Date.now(),
+            proofPhotoUri: uploadedPhotoUrl,
+          });
+
+          const recipientDoc = await getDoc(doc(db, "users", toId));
+          const recipientData = recipientDoc.data();
+          if (recipientData?.pushToken) {
+            const template = NotificationTemplates.settlementRequest(
+              fromUser.name || fromUser.email,
+              amount,
+              getCurrencySymbol(),
+            );
+            await sendPushNotification(recipientData.pushToken, {
+              ...template,
+              data: { ...template.data, groupId },
+            });
+          }
+
+          setProofPhotoUri(null);
+          haptic.success();
+          Notify.success(`Settlement request sent to ${memberName(toId)}! 🎉`);
+          await loadAll();
+        } catch (e) {
+          setUploadingProof(false);
+          Notify.error("Failed to send request: " + e.message);
+        } finally {
+          setProcessing(false);
+        }
+      },
+    });
   };
 
   const handleConfirm = async (req) => {
     const sym = getCurrencySymbol();
-    Alert.alert(
-      "Confirm Payment",
-      `Confirm that ${req.fromName} paid you ${sym}${req.amount.toFixed(2)}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          onPress: async () => {
-            setProcessing(true);
-            try {
-              // Record confirmed settlement
-              await addDoc(collection(db, "settlements"), {
-                groupId,
-                from: req.from,
-                to: req.to,
-                amount: req.amount,
-                createdAt: Date.now(),
-                confirmedBy: user.uid,
-              });
-              // Mark the request as confirmed
-              await updateDoc(doc(db, "settlementRequests", req.id), {
-                status: "confirmed",
-                confirmedAt: Date.now(),
-              });
-              haptic.success();
 
-              Alert.alert("Confirmed!", "Balances updated.");
-              await loadAll(); // ← auto-refresh
-            } catch (e) {
-              Alert.alert("Error", e.message);
-            } finally {
-              setProcessing(false);
-            }
-          },
-        },
-      ],
+    confirm(
+      "Confirm Payment Received",
+      `Confirm that ${req.fromName} paid you ${sym}${req.amount.toFixed(2)}?\n\nThis will update your balances.`,
+      async () => {
+        setProcessing(true);
+        try {
+          await addDoc(collection(db, "settlements"), {
+            groupId,
+            from: req.from,
+            to: req.to,
+            amount: req.amount,
+            createdAt: Date.now(),
+            confirmedBy: user.uid,
+          });
+
+          await updateDoc(doc(db, "settlementRequests", req.id), {
+            status: "confirmed",
+            confirmedAt: Date.now(),
+          });
+
+          haptic.success();
+          Notify.success("Payment confirmed! Balances updated ✅");
+          await loadAll();
+        } catch (e) {
+          Notify.error("Failed to confirm: " + e.message);
+        } finally {
+          setProcessing(false);
+        }
+      },
     );
   };
 
   const handleReject = async (req) => {
     const sym = getCurrencySymbol();
-    Alert.alert(
-      "Reject",
-      `Reject ${sym}${req.amount.toFixed(2)} from ${req.fromName}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Reject",
-          style: "destructive",
-          onPress: async () => {
-            setProcessing(true);
-            try {
-              await updateDoc(doc(db, "settlementRequests", req.id), {
-                status: "rejected",
-                rejectedAt: Date.now(),
-              });
-              Alert.alert("Rejected", "The request was rejected.");
-              await loadAll(); // ← auto-refresh
-            } catch (e) {
-              Alert.alert("Error", e.message);
-            } finally {
-              setProcessing(false);
-            }
-          },
-        },
-      ],
-    );
+
+    show({
+      type: "warning",
+      title: "Reject Settlement Request",
+      message: `Are you sure you want to reject ${sym}${req.amount.toFixed(2)} from ${req.fromName}?`,
+      confirmText: "Yes, Reject",
+      cancelText: "Keep It",
+      onConfirm: async () => {
+        setProcessing(true);
+        try {
+          await updateDoc(doc(db, "settlementRequests", req.id), {
+            status: "rejected",
+            rejectedAt: Date.now(),
+          });
+
+          haptic.warning();
+          Notify.info("Settlement request rejected");
+          await loadAll();
+        } catch (e) {
+          Notify.error("Failed to reject: " + e.message);
+        } finally {
+          setProcessing(false);
+        }
+      },
+    });
   };
 
   /* ================================================================
@@ -402,11 +477,9 @@ export default function SettleUpScreen({ route, navigation }) {
   const requestsFromMe = pendingRequests.filter((r) => r.from === user.uid);
   const myBalance = netBalances[user.uid] || 0;
 
-  // From optimised plan: what I owe and what's owed to me
   const iShouldPay = optimised.filter((t) => t.from === user.uid);
   const shouldPayMe = optimised.filter((t) => t.to === user.uid);
 
-  // Per-member breakdown for the "How we calculated this" panel
   const memberBreakdown = Object.keys(membersMap).map((uid) => {
     let totalPaid = 0;
     let totalShare = 0;
@@ -417,7 +490,6 @@ export default function SettleUpScreen({ route, navigation }) {
       if (splitBetween.includes(uid))
         totalShare += amount / splitBetween.length;
     });
-    // subtract confirmed settlements from net
     const net = netBalances[uid] || 0;
     return { uid, totalPaid, totalShare, net };
   });
@@ -435,7 +507,7 @@ export default function SettleUpScreen({ route, navigation }) {
      ================================================================ */
   return (
     <View style={st.root}>
-      {/* ── Header ── */}
+      {/* Header */}
       <View style={st.header}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -460,7 +532,7 @@ export default function SettleUpScreen({ route, navigation }) {
           />
         }
       >
-        {/* ═══════════ Net Balance Summary ═══════════ */}
+        {/* Net Balance Summary */}
         <View style={st.summaryCard}>
           <Text style={st.summaryLabel}>Your Net Balance</Text>
           <Text
@@ -488,7 +560,7 @@ export default function SettleUpScreen({ route, navigation }) {
           </Text>
         </View>
 
-        {/* ═══════════ Optimal Settlement Plan ═══════════ */}
+        {/* Optimal Settlement Plan */}
         {optimised.length > 0 ? (
           <View style={st.section}>
             <View style={st.sectionHead}>
@@ -505,7 +577,6 @@ export default function SettleUpScreen({ route, navigation }) {
                 needed to settle everyone:
               </Text>
 
-              {/* ── How we calculated this ── */}
               <TouchableOpacity
                 style={st.breakdownToggle}
                 onPress={() => setShowBreakdown((v) => !v)}
@@ -528,7 +599,6 @@ export default function SettleUpScreen({ route, navigation }) {
 
               {showBreakdown && (
                 <View style={st.breakdownPanel}>
-                  {/* Step 1 — per member net balance */}
                   <Text style={st.bpStepTitle}>
                     Step 1 — Net balance per person
                   </Text>
@@ -537,7 +607,6 @@ export default function SettleUpScreen({ route, navigation }) {
                   </Text>
 
                   <View style={st.bpTable}>
-                    {/* Header */}
                     <View style={st.bpTableRow}>
                       <Text style={[st.bpCell, st.bpHdr, { flex: 2 }]}>
                         Person
@@ -621,7 +690,6 @@ export default function SettleUpScreen({ route, navigation }) {
                     )}
                   </View>
 
-                  {/* Legend */}
                   <View style={st.bpLegend}>
                     <View style={st.bpLegendRow}>
                       <View
@@ -641,7 +709,6 @@ export default function SettleUpScreen({ route, navigation }) {
                     </View>
                   </View>
 
-                  {/* Step 2 — algorithm explanation */}
                   <Text style={[st.bpStepTitle, { marginTop: 14 }]}>
                     Step 2 — Minimize transactions
                   </Text>
@@ -651,29 +718,153 @@ export default function SettleUpScreen({ route, navigation }) {
                     Splitwise.
                   </Text>
 
-                  {optimised.map((txn, idx) => (
-                    <View key={idx} style={st.bpTxnRow}>
-                      <Text style={st.bpTxnNum}>{idx + 1}</Text>
-                      <View style={{ flex: 1 }}>
-                        <Text style={st.bpTxnTxt}>
-                          <Text style={{ color: "#EF4444", fontWeight: "700" }}>
+                  {optimised.map((txn, idx) => {
+                    const isMe = txn.from === user.uid || txn.to === user.uid;
+                    const isPayer = txn.from === user.uid;
+                    const pending = hasPendingRequest(txn.from, txn.to);
+                    const recipientData = membersMap[txn.to];
+                    const hasUPI = !!recipientData?.upiId;
+
+                    return (
+                      <View
+                        key={idx}
+                        style={[st.planRow, isMe && st.planRowHighlight]}
+                      >
+                        <TouchableOpacity
+                          style={[
+                            st.planAvatar,
+                            { backgroundColor: "#FEE2E2" },
+                          ]}
+                          onPress={() =>
+                            isPayer &&
+                            setPaymentInfoMember({
+                              memberData: recipientData,
+                              amount: txn.amount,
+                            })
+                          }
+                          activeOpacity={isPayer ? 0.6 : 1}
+                        >
+                          <Text style={st.planAvatarTxt}>
+                            {memberName(txn.from)[0].toUpperCase()}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <View style={st.planCenter}>
+                          <Text style={st.planFrom}>
                             {txn.from === user.uid
                               ? "You"
                               : memberName(txn.from)}
                           </Text>
-                          <Text style={{ color: "#6B7280" }}> pays </Text>
-                          <Text style={{ color: "#10B981", fontWeight: "700" }}>
-                            {txn.to === user.uid ? "You" : memberName(txn.to)}
+                          <View style={st.planArrowRow}>
+                            <View style={st.planLine} />
+                            <View style={st.planAmtBadge}>
+                              <Text style={st.planAmtTxt}>
+                                {sym}
+                                {txn.amount.toFixed(2)}
+                              </Text>
+                            </View>
+                            <View style={st.planLine} />
+                            <Ionicons
+                              name="arrow-forward"
+                              size={14}
+                              color="#8B5CF6"
+                            />
+                          </View>
+                          <TouchableOpacity
+                            onPress={() =>
+                              isPayer &&
+                              setPaymentInfoMember({
+                                memberData: recipientData,
+                                amount: txn.amount,
+                              })
+                            }
+                            activeOpacity={isPayer ? 0.6 : 1}
+                          >
+                            <Text
+                              style={[
+                                st.planTo,
+                                isPayer && {
+                                  color: "#6366F1",
+                                  textDecorationLine: "underline",
+                                },
+                              ]}
+                            >
+                              {txn.to === user.uid ? "You" : memberName(txn.to)}
+                              {isPayer && hasUPI ? " 💳" : ""}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <TouchableOpacity
+                          style={[
+                            st.planAvatar,
+                            { backgroundColor: "#D1FAE5" },
+                          ]}
+                          onPress={() =>
+                            isPayer &&
+                            setPaymentInfoMember({
+                              memberData: recipientData,
+                              amount: txn.amount,
+                            })
+                          }
+                          activeOpacity={isPayer ? 0.6 : 1}
+                        >
+                          <Text style={st.planAvatarTxt}>
+                            {memberName(txn.to)[0].toUpperCase()}
                           </Text>
-                          <Text style={{ color: "#6B7280" }}> → </Text>
-                          <Text style={{ color: "#8B5CF6", fontWeight: "700" }}>
-                            {sym}
-                            {txn.amount.toFixed(2)}
-                          </Text>
-                        </Text>
+                        </TouchableOpacity>
+
+                        {/* ✅ Action buttons for payer */}
+                        {isPayer && (
+                          <View style={st.planActions}>
+                            {pending ? (
+                              <View style={st.sentBadge}>
+                                <Ionicons
+                                  name="time"
+                                  size={14}
+                                  color="#92400E"
+                                />
+                                <Text style={st.sentTxt}>Sent</Text>
+                              </View>
+                            ) : (
+                              <>
+                                {/* ✅ UPI Pay Button */}
+                                {hasUPI && (
+                                  <TouchableOpacity
+                                    style={st.upiBtn}
+                                    onPress={() =>
+                                      openUPIPayment(
+                                        recipientData.upiId,
+                                        memberName(txn.to),
+                                        txn.amount,
+                                      )
+                                    }
+                                  >
+                                    <Text style={st.upiBtnTxt}>Pay</Text>
+                                  </TouchableOpacity>
+                                )}
+
+                                {/* Settlement Request Button */}
+                                <TouchableOpacity
+                                  style={st.payBtn}
+                                  onPress={() =>
+                                    sendSettlementRequest(txn.to, txn.amount)
+                                  }
+                                  disabled={processing}
+                                >
+                                  <Ionicons
+                                    name="paper-plane"
+                                    size={14}
+                                    color="#fff"
+                                  />
+                                </TouchableOpacity>
+                              </>
+                            )}
+                          </View>
+                        )}
                       </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               )}
 
@@ -687,16 +878,22 @@ export default function SettleUpScreen({ route, navigation }) {
                     key={idx}
                     style={[st.planRow, isMe && st.planRowHighlight]}
                   >
-                    {/* From avatar */}
-                    <View
+                    <TouchableOpacity
                       style={[st.planAvatar, { backgroundColor: "#FEE2E2" }]}
+                      onPress={() =>
+                        isPayer &&
+                        setPaymentInfoMember({
+                          memberData: membersMap[txn.to],
+                          amount: txn.amount,
+                        })
+                      }
+                      activeOpacity={isPayer ? 0.6 : 1}
                     >
                       <Text style={st.planAvatarTxt}>
                         {memberName(txn.from)[0].toUpperCase()}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
 
-                    {/* Arrow + amount */}
                     <View style={st.planCenter}>
                       <Text style={st.planFrom}>
                         {txn.from === user.uid ? "You" : memberName(txn.from)}
@@ -716,21 +913,47 @@ export default function SettleUpScreen({ route, navigation }) {
                           color="#8B5CF6"
                         />
                       </View>
-                      <Text style={st.planTo}>
-                        {txn.to === user.uid ? "You" : memberName(txn.to)}
-                      </Text>
+                      <TouchableOpacity
+                        onPress={() =>
+                          isPayer &&
+                          setPaymentInfoMember({
+                            memberData: membersMap[txn.to],
+                            amount: txn.amount,
+                          })
+                        }
+                        activeOpacity={isPayer ? 0.6 : 1}
+                      >
+                        <Text
+                          style={[
+                            st.planTo,
+                            isPayer && {
+                              color: "#6366F1",
+                              textDecorationLine: "underline",
+                            },
+                          ]}
+                        >
+                          {txn.to === user.uid ? "You" : memberName(txn.to)}
+                          {isPayer ? " 💳" : ""}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
 
-                    {/* To avatar */}
-                    <View
+                    <TouchableOpacity
                       style={[st.planAvatar, { backgroundColor: "#D1FAE5" }]}
+                      onPress={() =>
+                        isPayer &&
+                        setPaymentInfoMember({
+                          memberData: membersMap[txn.to],
+                          amount: txn.amount,
+                        })
+                      }
+                      activeOpacity={isPayer ? 0.6 : 1}
                     >
                       <Text style={st.planAvatarTxt}>
                         {memberName(txn.to)[0].toUpperCase()}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
 
-                    {/* Action button (only if current user is the payer) */}
                     {isPayer &&
                       (pending ? (
                         <View style={st.sentBadge}>
@@ -755,7 +978,6 @@ export default function SettleUpScreen({ route, navigation }) {
             </View>
           </View>
         ) : expenses.length > 0 ? (
-          /* All settled */
           <View style={st.settledBox}>
             <Text style={{ fontSize: 48, marginBottom: 8 }}>🎉</Text>
             <Text style={st.settledTitle}>All Settled Up!</Text>
@@ -765,112 +987,178 @@ export default function SettleUpScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        {/* ═══════════ You Owe ═══════════ */}
-        {iShouldPay.length > 0 && (
-          <View style={st.section}>
-            <View style={st.sectionHead}>
-              <Ionicons name="arrow-up-circle" size={20} color="#EF4444" />
-              <Text
-                style={[st.sectionTitle, { color: "#EF4444", marginLeft: 8 }]}
-              >
-                You Owe
-              </Text>
-            </View>
-            {iShouldPay.map((txn, idx) => {
-              const pending = hasPendingRequest(user.uid, txn.to);
-              return (
-                <View
-                  key={idx}
-                  style={[
-                    st.card,
-                    { borderLeftWidth: 4, borderLeftColor: "#EF4444" },
-                  ]}
+        {/* You Owe */}
+        {iShouldPay.map((txn, idx) => {
+          const pending = hasPendingRequest(user.uid, txn.to);
+          const recipientData = membersMap[txn.to];
+          const hasUPI = !!recipientData?.upiId;
+
+          return (
+            <View
+              key={idx}
+              style={[
+                st.card,
+                { borderLeftWidth: 4, borderLeftColor: "#EF4444" },
+              ]}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TouchableOpacity
+                  onPress={() =>
+                    setPaymentInfoMember({
+                      memberData: recipientData,
+                      amount: txn.amount,
+                    })
+                  }
+                  activeOpacity={0.6}
                 >
-                  <View style={{ flexDirection: "row", alignItems: "center" }}>
-                    <View
-                      style={[st.oweAvatar, { backgroundColor: "#FEE2E2" }]}
+                  <View style={[st.oweAvatar, { backgroundColor: "#FEE2E2" }]}>
+                    <Text style={st.oweAvatarTxt}>
+                      {memberName(txn.to)[0].toUpperCase()}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{ flex: 1, marginLeft: 12 }}
+                  onPress={() =>
+                    setPaymentInfoMember({
+                      memberData: recipientData,
+                      amount: txn.amount,
+                    })
+                  }
+                  activeOpacity={0.6}
+                >
+                  <Text style={st.cardName}>
+                    {memberName(txn.to)}{" "}
+                    {hasUPI && (
+                      <Text style={{ fontSize: 13, color: "#6366F1" }}>💳</Text>
+                    )}
+                  </Text>
+                  <Text style={[st.cardAmt, { color: "#EF4444" }]}>
+                    {sym}
+                    {txn.amount.toFixed(2)}
+                  </Text>
+                  {hasUPI && <Text style={st.tapHint}>Tap to pay via UPI</Text>}
+                </TouchableOpacity>
+
+                {pending ? (
+                  <View style={st.pendingActions}>
+                    <View style={st.sentBadge}>
+                      <Ionicons name="time" size={14} color="#92400E" />
+                      <Text style={st.sentTxt}>Pending</Text>
+                    </View>
+                    {/* ✅ WhatsApp reminder */}
+                    <TouchableOpacity
+                      style={st.whatsappSmallBtn}
+                      onPress={() =>
+                        shareViaWhatsApp(memberName(txn.to), txn.amount, sym)
+                      }
                     >
-                      <Text style={st.oweAvatarTxt}>
-                        {memberName(txn.to)[0].toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={st.cardName}>{memberName(txn.to)}</Text>
-                      <Text style={[st.cardAmt, { color: "#EF4444" }]}>
-                        {sym}
-                        {txn.amount.toFixed(2)}
-                      </Text>
-                    </View>
-                    {pending ? (
-                      <View style={st.sentBadge}>
-                        <Ionicons name="time" size={14} color="#92400E" />
-                        <Text style={st.sentTxt}>Pending</Text>
-                      </View>
-                    ) : (
+                      <Ionicons
+                        name="logo-whatsapp"
+                        size={18}
+                        color="#25D366"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={st.cardBtns}>
+                    {/* ✅ UPI Direct Pay */}
+                    {hasUPI && (
                       <TouchableOpacity
-                        style={st.settleBtn}
+                        style={st.upiPayBtn}
                         onPress={() =>
-                          sendSettlementRequest(txn.to, txn.amount)
+                          openUPIPayment(
+                            recipientData.upiId,
+                            memberName(txn.to),
+                            txn.amount,
+                          )
                         }
-                        disabled={processing}
                       >
-                        <Ionicons name="wallet" size={16} color="#fff" />
-                        <Text style={st.settleBtnTxt}>Settle Up</Text>
+                        <Text style={st.upiPayBtnIcon}>₹</Text>
+                        <Text style={st.upiPayBtnTxt}>Pay UPI</Text>
                       </TouchableOpacity>
                     )}
-                  </View>
-                  {/* Payment proof attachment (only visible if no pending request yet) */}
-                  {!pending && (
-                    <View style={st.proofRow}>
-                      <TouchableOpacity
-                        style={st.proofAttachBtn}
-                        onPress={handleAttachProof}
-                      >
-                        <Ionicons
-                          name="camera"
-                          size={15}
-                          color="#6366F1"
-                          style={{ marginRight: 5 }}
-                        />
-                        <Text style={st.proofAttachTxt}>
-                          {proofPhotoUri
-                            ? "✅ Proof attached"
-                            : "Attach payment proof"}
-                        </Text>
-                      </TouchableOpacity>
-                      {proofPhotoUri && (
-                        <TouchableOpacity
-                          onPress={() => setProofPhotoUri(null)}
-                          style={{ marginLeft: 8 }}
-                        >
-                          <Ionicons
-                            name="close-circle"
-                            size={18}
-                            color="#EF4444"
-                          />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
-                  {proofPhotoUri && !pending && (
+
+                    {/* Settlement Request */}
                     <TouchableOpacity
-                      onPress={() => setViewingProof(proofPhotoUri)}
-                      style={{ marginTop: 6 }}
+                      style={st.settleBtn}
+                      onPress={() => sendSettlementRequest(txn.to, txn.amount)}
+                      disabled={processing}
                     >
-                      <Image
-                        source={{ uri: proofPhotoUri }}
-                        style={st.proofThumb}
-                        resizeMode="cover"
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={16}
+                        color="#fff"
                       />
+                      <Text style={st.settleBtnTxt}>Settle</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+
+              {/* Proof attachment - only show if not pending */}
+              {!pending && (
+                <View style={st.proofRow}>
+                  {hasFeature("paymentProof") ? (
+                    <TouchableOpacity
+                      style={st.proofAttachBtn}
+                      onPress={handleAttachProof}
+                    >
+                      <Ionicons
+                        name="camera"
+                        size={15}
+                        color="#6366F1"
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text style={st.proofAttachTxt}>
+                        {proofPhotoUri ? "✅ Proof attached" : "Attach proof"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={st.proofLockedBtn}
+                      onPress={handleAttachProof}
+                    >
+                      <Ionicons
+                        name="lock-closed"
+                        size={13}
+                        color="#F59E0B"
+                        style={{ marginRight: 5 }}
+                      />
+                      <Text style={st.proofLockedTxt}>Attach proof</Text>
+                      <View style={st.proofProBadge}>
+                        <Text style={st.proofProBadgeTxt}>PRO</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  {proofPhotoUri && hasFeature("paymentProof") && (
+                    <TouchableOpacity
+                      onPress={() => setProofPhotoUri(null)}
+                      style={{ marginLeft: 8 }}
+                    >
+                      <Ionicons name="close-circle" size={18} color="#EF4444" />
                     </TouchableOpacity>
                   )}
                 </View>
-              );
-            })}
-          </View>
-        )}
+              )}
 
-        {/* ═══════════ Owes You ═══════════ */}
+              {proofPhotoUri && hasFeature("paymentProof") && !pending && (
+                <TouchableOpacity
+                  onPress={() => setViewingProof(proofPhotoUri)}
+                  style={{ marginTop: 6 }}
+                >
+                  <Image
+                    source={{ uri: proofPhotoUri }}
+                    style={st.proofThumb}
+                    resizeMode="cover"
+                  />
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })}
+
+        {/* Owes You */}
         {shouldPayMe.length > 0 && (
           <View style={st.section}>
             <View style={st.sectionHead}>
@@ -919,7 +1207,7 @@ export default function SettleUpScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* ═══════════ Pending – Action Required ═══════════ */}
+        {/* Pending – Action Required */}
         {requestsToMe.length > 0 && (
           <View style={st.section}>
             <View style={st.sectionHead}>
@@ -938,7 +1226,6 @@ export default function SettleUpScreen({ route, navigation }) {
                   {r.amount.toFixed(2)}
                 </Text>
                 <Text style={st.cardDate}>{fmtDate(r.createdAt)}</Text>
-                {/* Payment proof photo (if provided by payer) */}
                 {r.proofPhotoUri && (
                   <View style={{ marginBottom: 12 }}>
                     <Text
@@ -992,7 +1279,7 @@ export default function SettleUpScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* ═══════════ Pending – Awaiting Confirmation ═══════════ */}
+        {/* Pending – Awaiting Confirmation */}
         {requestsFromMe.length > 0 && (
           <View style={st.section}>
             <View style={st.sectionHead}>
@@ -1022,7 +1309,7 @@ export default function SettleUpScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* ═══════════ Settlement History ═══════════ */}
+        {/* Settlement History */}
         {confirmedSettlements.length > 0 && (
           <View style={st.section}>
             <View style={st.sectionHead}>
@@ -1076,7 +1363,78 @@ export default function SettleUpScreen({ route, navigation }) {
         )}
       </ScrollView>
 
-      {/* ── Full-screen proof photo viewer ── */}
+      {/* Payment Info Modal */}
+      <RNModal
+        visible={!!paymentInfoMember}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaymentInfoMember(null)}
+      >
+        <TouchableOpacity
+          style={st.payModalOverlay}
+          activeOpacity={1}
+          onPress={() => setPaymentInfoMember(null)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={st.payModalSheet}
+            onPress={() => {}}
+          >
+            <View style={st.payModalHandle} />
+            <View style={st.payModalHeader}>
+              <View style={st.payModalAvatar}>
+                <Text
+                  style={{ fontSize: 20, fontWeight: "bold", color: "#1F2937" }}
+                >
+                  {(paymentInfoMember?.memberData?.name ||
+                    paymentInfoMember?.memberData?.email ||
+                    "?")[0].toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={st.payModalName}>
+                  {paymentInfoMember?.memberData?.name ||
+                    paymentInfoMember?.memberData?.email ||
+                    "Member"}
+                </Text>
+                <Text style={st.payModalSub}>Payment Details</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPaymentInfoMember(null)}
+                style={st.payModalClose}
+              >
+                <Ionicons name="close" size={20} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+            <PaymentInfoCard
+              memberData={paymentInfoMember?.memberData}
+              amount={paymentInfoMember?.amount}
+              currencySymbol={sym}
+            />
+            {!paymentInfoMember?.memberData?.upiId &&
+              !paymentInfoMember?.memberData?.bankAccount &&
+              !paymentInfoMember?.memberData?.phone && (
+                <View style={st.payModalEmpty}>
+                  <Ionicons name="card-outline" size={32} color="#D1D5DB" />
+                  <Text style={st.payModalEmptyTxt}>
+                    No payment details added yet
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: "#9CA3AF",
+                      textAlign: "center",
+                    }}
+                  >
+                    Ask them to add their UPI or bank details in their Profile
+                  </Text>
+                </View>
+              )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </RNModal>
+
+      {/* Full-screen proof photo viewer */}
       <RNModal
         visible={!!viewingProof}
         transparent
@@ -1108,7 +1466,7 @@ export default function SettleUpScreen({ route, navigation }) {
         </TouchableOpacity>
       </RNModal>
 
-      {/* ── Upload proof overlay ── */}
+      {/* Upload proof overlay */}
       {uploadingProof && (
         <View style={st.uploadOverlay}>
           <View style={st.uploadBox}>
@@ -1123,7 +1481,7 @@ export default function SettleUpScreen({ route, navigation }) {
 }
 
 /* ================================================================
-   Styles  (no `gap` — iOS-safe)
+   Styles
    ================================================================ */
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#F9FAFB" },
@@ -1133,7 +1491,48 @@ const st = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#F9FAFB",
   },
-
+  cardBtns: {
+    flexDirection: "column",
+    gap: 6,
+    alignItems: "flex-end",
+  },
+  upiPayBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#7C3AED",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    gap: 4,
+  },
+  upiPayBtnIcon: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#fff",
+  },
+  upiPayBtnTxt: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  pendingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  whatsappSmallBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#E8FDF5",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  tapHint: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 2,
+  },
   uploadOverlay: {
     position: "absolute",
     top: 0,
@@ -1196,7 +1595,6 @@ const st = StyleSheet.create({
     color: "#1F2937",
   },
 
-  /* ── summary card ── */
   summaryCard: {
     backgroundColor: "#fff",
     borderRadius: 14,
@@ -1217,12 +1615,10 @@ const st = StyleSheet.create({
   red: { color: "#EF4444" },
   gray: { color: "#6B7280" },
 
-  /* ── section ── */
   section: { marginBottom: 24 },
   sectionHead: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
   sectionTitle: { fontSize: 17, fontWeight: "bold", color: "#1F2937" },
 
-  /* ── optimised plan ── */
   planCard: {
     backgroundColor: "#F5F3FF",
     borderRadius: 14,
@@ -1293,7 +1689,6 @@ const st = StyleSheet.create({
   },
   sentTxt: { color: "#92400E", fontSize: 12, fontWeight: "600", marginLeft: 4 },
 
-  /* ── breakdown toggle + panel ── */
   breakdownToggle: {
     flexDirection: "row",
     alignItems: "center",
@@ -1302,6 +1697,33 @@ const st = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     marginBottom: 14,
+  },
+  planActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginLeft: 8,
+  },
+  upiBtn: {
+    backgroundColor: "#5B21B6",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  upiBtnTxt: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  whatsappBtn: {
+    backgroundColor: "#25D366",
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
   },
   breakdownToggleTxt: {
     flex: 1,
@@ -1375,7 +1797,6 @@ const st = StyleSheet.create({
   },
   bpTxnTxt: { fontSize: 13, color: "#1F2937" },
 
-  /* ── payment proof ── */
   proofRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1395,9 +1816,89 @@ const st = StyleSheet.create({
     borderColor: "#C7D2FE",
   },
   proofAttachTxt: { fontSize: 12, color: "#6366F1", fontWeight: "600" },
+  proofLockedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  proofLockedTxt: { fontSize: 12, color: "#92400E", fontWeight: "600" },
+  proofProBadge: {
+    backgroundColor: "#F59E0B",
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    marginLeft: 6,
+  },
+  proofProBadgeTxt: {
+    fontSize: 9,
+    color: "#fff",
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
   proofThumb: { width: "100%", height: 160, borderRadius: 10, marginTop: 6 },
 
-  /* ── you owe / owes you ── */
+  tapHint: { fontSize: 11, color: "#6366F1", marginTop: 2 },
+
+  payModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  payModalSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  payModalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#E5E7EB",
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  payModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  payModalAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#EEF2FF",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  payModalName: { fontSize: 16, fontWeight: "700", color: "#1F2937" },
+  payModalSub: { fontSize: 12, color: "#9CA3AF", marginTop: 2 },
+  payModalClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  payModalEmpty: {
+    alignItems: "center",
+    paddingVertical: 24,
+    gap: 8,
+  },
+  payModalEmptyTxt: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#9CA3AF",
+    marginTop: 4,
+  },
+
   oweAvatar: {
     width: 40,
     height: 40,
@@ -1421,7 +1922,6 @@ const st = StyleSheet.create({
     marginLeft: 6,
   },
 
-  /* ── all settled ── */
   settledBox: {
     backgroundColor: "#D1FAE5",
     borderRadius: 14,
@@ -1439,7 +1939,6 @@ const st = StyleSheet.create({
   },
   settledSub: { fontSize: 14, color: "#065F46", textAlign: "center" },
 
-  /* ── action-required cards ── */
   card: {
     backgroundColor: "#fff",
     padding: 16,
@@ -1481,7 +1980,6 @@ const st = StyleSheet.create({
     marginLeft: 6,
   },
 
-  /* ── history ── */
   histRow: {
     flexDirection: "row",
     alignItems: "center",

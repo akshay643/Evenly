@@ -115,3 +115,34 @@ export function getCategoryColor(key) {
   };
   return colors[key] || colors.other;
 }
+
+export const dummyCategoryBreakdown = [
+  {
+    key: "food",
+    label: "Food & Dining",
+    total: 2450,
+    color: "#F97316",
+    icon: "🍔",
+  },
+  {
+    key: "travel",
+    label: "Travel",
+    total: 1800,
+    color: "#06B6D4",
+    icon: "✈️",
+  },
+  {
+    key: "shopping",
+    label: "Shopping",
+    total: 3200,
+    color: "#8B5CF6",
+    icon: "🛍️",
+  },
+  {
+    key: "bills",
+    label: "Bills",
+    total: 2100,
+    color: "#EF4444",
+    icon: "📄",
+  },
+];

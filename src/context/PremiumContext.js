@@ -34,11 +34,11 @@ export function PremiumProvider({ children }) {
             ? sub.expiresAt.toDate()
             : new Date(sub.expiresAt || 0);
 
-          // Check if lifetime or not expired
-          if (sub.type === 'lifetime' || expiresAt > new Date()) {
-            setCurrentPlan(PLANS[sub.planId] || PLANS.pro);
+          // Check if not expired
+          if (expiresAt > new Date()) {
+            setCurrentPlan(PLANS.premium);
           } else {
-            // Expired
+            // Expired - downgrade to free
             setCurrentPlan(PLANS.free);
           }
         } else {
@@ -53,39 +53,54 @@ export function PremiumProvider({ children }) {
 
   // ── Check if a specific feature is available ──
   const hasFeature = (featureKey) => {
-    return currentPlan.features[featureKey] === true ||
-           (typeof currentPlan.features[featureKey] === 'number' &&
-            currentPlan.features[featureKey] === -1);
+    const feature = currentPlan.features[featureKey];
+    // Feature is available if it's true or unlimited (-1)
+    return feature === true || feature === -1;
   };
 
-  // ── Check if user can perform an action (with limits) ──
+  // ── Get limit value for a specific key ──
   const getLimit = (limitKey) => {
-    return currentPlan[limitKey] || currentPlan.features[limitKey] || 0;
+    // Check plan-level limits first, then features
+    return currentPlan[limitKey] ?? currentPlan.features[limitKey] ?? 0;
   };
 
-  // ── Check if at limit ──
+  // ── Check if user has reached the limit ──
   const isAtLimit = (limitKey, currentCount) => {
     const limit = getLimit(limitKey);
-    if (limit === -1) return false;  // unlimited
+    if (limit === -1) return false; // Unlimited
     return currentCount >= limit;
   };
 
-  const isPro = currentPlan.id === 'pro' || currentPlan.id === 'premium';
+  // ── Get remaining count for a limit ──
+  const getRemainingCount = (limitKey, currentCount) => {
+    const limit = getLimit(limitKey);
+    if (limit === -1) return Infinity; // Unlimited
+    return Math.max(0, limit - currentCount);
+  };
+
+  // Simple boolean checks
   const isPremium = currentPlan.id === 'premium';
   const isFree = currentPlan.id === 'free';
 
   return (
     <PremiumContext.Provider
       value={{
+        // Subscription data
         subscription,
         currentPlan,
         loading,
+
+        // Feature checks
         hasFeature,
         getLimit,
         isAtLimit,
-        isPro,
+        getRemainingCount,
+
+        // Plan status
         isPremium,
         isFree,
+
+        // Plan display info
         planName: currentPlan.name,
         planIcon: currentPlan.icon,
         planColor: currentPlan.color,
@@ -94,4 +109,13 @@ export function PremiumProvider({ children }) {
       {children}
     </PremiumContext.Provider>
   );
+}
+
+// ── Custom hook for easier usage ──
+export function usePremium() {
+  const context = useContext(PremiumContext);
+  if (!context) {
+    throw new Error('usePremium must be used within a PremiumProvider');
+  }
+  return context;
 }

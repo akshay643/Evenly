@@ -1,14 +1,15 @@
+require('dotenv').config();
 const { initializeApp } = require('firebase/app');
 const { getFirestore, doc, setDoc } = require('firebase/firestore');
 const { getAuth, signInWithEmailAndPassword } = require('firebase/auth');
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCyVDBJVFCu9otK51Z1p9BHLEfbkdY_TPU",
-  authDomain: "evenly-6ff36.firebaseapp.com",
-  projectId: "evenly-6ff36",
-  storageBucket: "evenly-6ff36.firebasestorage.app",
-  messagingSenderId: "422293063354",
-  appId: "1:422293063354:web:01e0c41e2d72d5c89e0ab3"
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);

@@ -1,15 +1,15 @@
 {
   "project_info": {
     "project_number": "240071770069",
-    "project_id": "evenly-6ff36",
-    "storage_bucket": "evenly-6ff36.firebasestorage.app"
+    "project_id": "evynly-6ff36",
+    "storage_bucket": "evynly-6ff36.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
         "mobilesdk_app_id": "1:240071770069:android:418bb52e53f059c62cc75c",
         "android_client_info": {
-          "package_name": "com.evenly.app"
+          "package_name": "com.evynly.app"
         }
       },
       "oauth_client": [
@@ -17,7 +17,7 @@
           "client_id": "240071770069-6slejsht0h266q1prjui92l1sd49cf1l.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.evenly.app",
+            "package_name": "com.evynly.app",
             "certificate_hash": "ac2879ca930639a8718da93cc975a1f7c46df5d4"
           }
         },
@@ -42,7 +42,7 @@
               "client_id": "240071770069-1u99bkld8873k8m0u5qam0hq41l9bro3.apps.googleusercontent.com",
               "client_type": 2,
               "ios_info": {
-                "bundle_id": "com.evenly.app"
+                "bundle_id": "com.evynly.app"
               }
             }
           ]

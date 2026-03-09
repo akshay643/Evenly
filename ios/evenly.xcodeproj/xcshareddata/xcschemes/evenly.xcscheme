@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-               BuildableName = "evenly.app"
-               BlueprintName = "evenly"
-               ReferencedContainer = "container:evenly.xcodeproj">
+               BuildableName = "evynly.app"
+               BlueprintName = "evynly"
+               ReferencedContainer = "container:evynly.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "00E356ED1AD99517003FC87E"
-               BuildableName = "evenlyTests.xctest"
-               BlueprintName = "evenlyTests"
-               ReferencedContainer = "container:evenly.xcodeproj">
+               BuildableName = "evynlyTests.xctest"
+               BlueprintName = "evynlyTests"
+               ReferencedContainer = "container:evynly.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -55,9 +55,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "evenly.app"
-            BlueprintName = "evenly"
-            ReferencedContainer = "container:evenly.xcodeproj">
+            BuildableName = "evynly.app"
+            BlueprintName = "evynly"
+            ReferencedContainer = "container:evynly.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,9 +72,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "evenly.app"
-            BlueprintName = "evenly"
-            ReferencedContainer = "container:evenly.xcodeproj">
+            BuildableName = "evynly.app"
+            BlueprintName = "evynly"
+            ReferencedContainer = "container:evynly.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

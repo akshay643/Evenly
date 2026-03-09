@@ -1,4 +1,4 @@
-package com.evenly.app
+package com.evynly.app
 
 import android.os.Build
 import android.os.Bundle

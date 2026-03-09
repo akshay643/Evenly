@@ -14,17 +14,19 @@ import {
 import PremiumBadge from "../components/PremiumBadge";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { signOut } from "firebase/auth";
+import { signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from "firebase/auth";
 import { auth, db } from "../../firebase.config";
 import { AuthContext } from "../context/AuthContext";
 import {
   doc,
   getDoc,
   updateDoc,
+  deleteDoc,
   collection,
   query,
   where,
   getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import { PremiumContext } from "../context/PremiumContext";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -253,6 +255,52 @@ export default function ProfileScreen({ navigation }) {
       console.error("Error picking image:", error);
       Alert.alert("Error", "Failed to update profile picture");
     }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your account and all associated data (profile, payment info). You will be removed from all groups.\n\nThis cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Account",
+          style: "destructive",
+          onPress: () => {
+            // Ask for password confirmation before deleting
+            Alert.prompt(
+              "Confirm Password",
+              "Enter your password to confirm account deletion.",
+              async (password) => {
+                if (!password) return;
+                try {
+                  const credential = EmailAuthProvider.credential(
+                    user.email,
+                    password
+                  );
+                  await reauthenticateWithCredential(auth.currentUser, credential);
+
+                  // Delete Firestore user document
+                  await deleteDoc(doc(db, "users", user.uid));
+
+                  // Delete Firebase Auth account
+                  await deleteUser(auth.currentUser);
+
+                  // AuthContext will detect sign-out and redirect automatically
+                } catch (error) {
+                  if (error.code === "auth/wrong-password" || error.code === "auth/invalid-credential") {
+                    Alert.alert("Error", "Incorrect password. Please try again.");
+                  } else {
+                    Alert.alert("Error", error.message);
+                  }
+                }
+              },
+              "secure-text"
+            );
+          },
+        },
+      ]
+    );
   };
 
   const handleSignOut = async () => {
@@ -738,6 +786,22 @@ export default function ProfileScreen({ navigation }) {
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
 
+        {/* Danger Zone */}
+        <View style={styles.dangerZone}>
+          <Text style={styles.dangerZoneTitle}>Danger Zone</Text>
+          <TouchableOpacity
+            style={styles.deleteAccountButton}
+            onPress={handleDeleteAccount}
+          >
+            <Ionicons name="trash-outline" size={18} color="#EF4444" />
+            <Text style={styles.deleteAccountText}>Delete Account & Data</Text>
+          </TouchableOpacity>
+          <Text style={styles.dangerZoneHint}>
+            Permanently deletes your account and all personal data. This cannot
+            be undone.
+          </Text>
+        </View>
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
@@ -1172,5 +1236,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     marginLeft: 8,
+  },
+  dangerZone: {
+    marginHorizontal: 16,
+    marginTop: 24,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#FECACA",
+  },
+  dangerZoneTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#B91C1C",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  deleteAccountButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderWidth: 1.5,
+    borderColor: "#FCA5A5",
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  deleteAccountText: {
+    color: "#EF4444",
+    fontSize: 15,
+    fontWeight: "600",
+    marginLeft: 8,
+  },
+  dangerZoneHint: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    lineHeight: 16,
   },
 });

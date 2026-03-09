@@ -5,15 +5,16 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
+  
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import Notify from '../utils/notify';
 
 export default function PaymentInfoCard({ memberData, amount, currencySymbol }) {
   const copyToClipboard = async (text, label) => {
     await Clipboard.setStringAsync(text);
-    Alert.alert('Copied! 📋', `${label} copied to clipboard`);
+    Notify.success( `${label} copied to clipboard`);
   };
 
   if (!memberData) return null;

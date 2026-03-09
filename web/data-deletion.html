@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Data Deletion Request — evynly</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #F9FAFB;
+      color: #1F2937;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px 80px;
+    }
+
+    .logo {
+      font-size: 28px;
+      font-weight: 800;
+      color: #6366F1;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+
+    .logo span { color: #1F2937; }
+
+    .tagline {
+      font-size: 14px;
+      color: #6B7280;
+      margin-bottom: 40px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 560px;
+      width: 100%;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+    }
+
+    .card h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .card p.sub {
+      font-size: 14px;
+      color: #6B7280;
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+
+    /* In-app option */
+    .in-app {
+      background: #EEF2FF;
+      border: 1.5px solid #C7D2FE;
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 24px;
+    }
+
+    .in-app h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #4338CA;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .in-app ol {
+      padding-left: 18px;
+      font-size: 14px;
+      color: #374151;
+      line-height: 2;
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      color: #9CA3AF;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: #E5E7EB;
+    }
+
+    /* Form */
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border: 1.5px solid #E5E7EB;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 15px;
+      color: #1F2937;
+      background: #F9FAFB;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 18px;
+      font-family: inherit;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: #6366F1;
+      background: #fff;
+    }
+
+    textarea { resize: vertical; min-height: 90px; }
+
+    .checkbox-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .checkbox-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin: 2px 0 0;
+      flex-shrink: 0;
+      accent-color: #6366F1;
+      cursor: pointer;
+    }
+
+    .checkbox-row label {
+      font-size: 13px;
+      font-weight: 400;
+      color: #6B7280;
+      line-height: 1.5;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+
+    button[type="submit"] {
+      width: 100%;
+      background: #EF4444;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    button[type="submit"]:hover { background: #DC2626; }
+    button[type="submit"]:active { transform: scale(0.98); }
+
+    .note {
+      font-size: 12px;
+      color: #9CA3AF;
+      text-align: center;
+      margin-top: 16px;
+      line-height: 1.6;
+    }
+
+    /* What gets deleted table */
+    .what-deleted {
+      margin-top: 36px;
+      padding-top: 28px;
+      border-top: 1px solid #F3F4F6;
+    }
+
+    .what-deleted h2 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #9CA3AF;
+      padding: 8px 10px;
+      border-bottom: 1px solid #F3F4F6;
+    }
+
+    td {
+      padding: 10px 10px;
+      border-bottom: 1px solid #F9FAFB;
+      color: #374151;
+      line-height: 1.4;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .badge-yes {
+      display: inline-block;
+      background: #D1FAE5;
+      color: #065F46;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .badge-retained {
+      display: inline-block;
+      background: #FEF3C7;
+      color: #92400E;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    footer {
+      margin-top: 36px;
+      font-size: 12px;
+      color: #D1D5DB;
+      text-align: center;
+    }
+
+    footer a { color: #9CA3AF; text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div class="logo">evynly<span>.</span></div>
+  <p class="tagline">Split expenses. Stay friends.</p>
+
+  <div class="card">
+    <h1>Delete My Account &amp; Data</h1>
+    <p class="sub">
+      You can delete your account directly inside the app, or submit a request
+      below and we'll process it within 7 business days.
+    </p>
+
+    <!-- In-app option -->
+    <div class="in-app">
+      <h2>⚡ Fastest: Delete in the app</h2>
+      <ol>
+        <li>Open evynly and go to your <strong>Profile</strong> tab</li>
+        <li>Scroll to the bottom — tap <strong>"Delete Account &amp; Data"</strong></li>
+        <li>Confirm with your password — done instantly</li>
+      </ol>
+    </div>
+
+    <div class="divider">or submit a request</div>
+
+    <!-- Request form -->
+    <form
+      action="https://formsubmit.co/privacy@evynly.app"
+      method="POST"
+    >
+      <!-- FormSubmit config -->
+      <input type="hidden" name="_subject" value="Account Deletion Request — evynly" />
+      <input type="hidden" name="_captcha" value="false" />
+      <input type="hidden" name="_template" value="table" />
+      <input type="hidden" name="_next" value="https://evynly.app/data-deletion-thanks.html" />
+
+      <label for="email">Email address on your evynly account *</label>
+      <input
+        type="email"
+        id="email"
+        name="email"
+        placeholder="you@example.com"
+        required
+      />
+
+      <label for="scope">What would you like deleted? *</label>
+      <select id="scope" name="deletion_scope" required>
+        <option value="" disabled selected>Select an option…</option>
+        <option value="account_and_all_data">Account + all personal data (profile, payment info, etc.)</option>
+        <option value="account_and_all_data_including_expenses">Account + all data including expenses and settlements</option>
+        <option value="personal_data_only">Personal data only (keep account)</option>
+      </select>
+
+      <label for="notes">Additional notes (optional)</label>
+      <textarea
+        id="notes"
+        name="notes"
+        placeholder="Any other details…"
+      ></textarea>
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="confirm" name="confirmed" value="yes" required />
+        <label for="confirm">
+          I understand this action is permanent and cannot be undone. I confirm I am the
+          owner of the account associated with the email above.
+        </label>
+      </div>
+
+      <button type="submit">Submit Deletion Request</button>
+    </form>
+
+    <p class="note">
+      You will receive a confirmation email once your request has been processed.<br />
+      Requests are handled within <strong>7 business days</strong>.
+    </p>
+
+    <!-- What gets deleted -->
+    <div class="what-deleted">
+      <h2>What gets deleted</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Account credentials (email &amp; password)</td>
+            <td><span class="badge-yes">Deleted immediately</span></td>
+          </tr>
+          <tr>
+            <td>Profile info (name, photo)</td>
+            <td><span class="badge-yes">Deleted immediately</span></td>
+          </tr>
+          <tr>
+            <td>Payment info (UPI ID, bank details)</td>
+            <td><span class="badge-yes">Deleted immediately</span></td>
+          </tr>
+          <tr>
+            <td>Push notification tokens</td>
+            <td><span class="badge-yes">Deleted immediately</span></td>
+          </tr>
+          <tr>
+            <td>Expenses in shared groups</td>
+            <td><span class="badge-retained">Anonymised — "Deleted User"</span></td>
+          </tr>
+          <tr>
+            <td>Settlement records</td>
+            <td><span class="badge-retained">Retained for group integrity</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:#9CA3AF;margin-top:12px;line-height:1.6;">
+        Shared expense records are anonymised to preserve accurate balances for the
+        remaining group members. If you need these removed too, select the option above
+        or mention it in the notes field.
+      </p>
+    </div>
+  </div>
+
+  <footer>
+    &copy; 2026 evynly &nbsp;·&nbsp;
+    <a href="mailto:privacy@evynly.app">privacy@evynly.app</a>
+  </footer>
+
+</body>
+</html>

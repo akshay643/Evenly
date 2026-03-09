@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ActivityIndicator, View, Text, StyleSheet, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AuthContext } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 
 // Screens
 import OnboardingScreen from '../screens/OnboardingScreen';
@@ -28,8 +29,13 @@ const Tab = createBottomTabNavigator();
 // Bottom Tab Navigator
 // ──────────────────────────────────
 function MainTabs() {
+  const { isDark, colors } = useTheme();
+
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['bottom']}>
+    <SafeAreaView 
+      style={{ flex: 1, backgroundColor: colors.surface }}
+      edges={['bottom']}
+    >
       <Tab.Navigator
         screenOptions={({ route }) => ({
           headerShown: false,
@@ -42,18 +48,18 @@ function MainTabs() {
             };
             return <Ionicons name={icons[route.name]} size={22} color={color} />;
           },
-          tabBarActiveTintColor: '#6366F1',
-          tabBarInactiveTintColor: '#9CA3AF',
+          tabBarActiveTintColor: colors.primary,
+          tabBarInactiveTintColor: colors.textSecondary,
           tabBarStyle: {
-            backgroundColor: '#fff',
+            backgroundColor: colors.surface,
             borderTopWidth: 1,
-            borderTopColor: '#E5E7EB',
+            borderTopColor: colors.border,
             paddingBottom: Platform.OS === 'ios' ? 0 : 8,
             paddingTop: 8,
             height: Platform.OS === 'ios' ? 85 : 65,
             shadowColor: '#000',
             shadowOffset: { width: 0, height: -2 },
-            shadowOpacity: 0.06,
+            shadowOpacity: isDark ? 0.3 : 0.06,
             shadowRadius: 4,
             elevation: 8,
           },
@@ -94,23 +100,22 @@ function MainTabs() {
 // ──────────────────────────────────
 export default function AppNavigator({ onboardingDone, completeOnboarding }) {
   const { user, loading } = useContext(AuthContext);
+  const { isDark, colors } = useTheme();
 
-  // ── Auth still loading ──
+  // Auth loading state
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6366F1" />
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+          Loading...
+        </Text>
       </View>
     );
   }
 
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-
-      {/* ═══════════════════════════════════════════ */}
-      {/* STEP 1: Onboarding (first launch only)     */}
-      {/* ═══════════════════════════════════════════ */}
       {!onboardingDone ? (
         <Stack.Screen name="Onboarding">
           {(props) => (
@@ -118,25 +123,15 @@ export default function AppNavigator({ onboardingDone, completeOnboarding }) {
           )}
         </Stack.Screen>
       ) : !user ? (
-        /* ═══════════════════════════════════════════ */
-        /* STEP 2: Auth (not signed in)               */
-        /* ═══════════════════════════════════════════ */
         <Stack.Screen
           name="Auth"
           component={AuthScreen}
           options={{ animationTypeForReplace: 'pop' }}
         />
       ) : (
-        /* ═══════════════════════════════════════════ */
-        /* STEP 3: Authenticated app                  */
-        /* ═══════════════════════════════════════════ */
         <>
           <Stack.Screen name="Main" component={MainTabs} />
-          <Stack.Screen
-            name="Friends"
-            component={FriendsScreen}
-            options={{ headerShown: false }}
-          />
+          <Stack.Screen name="Friends" component={FriendsScreen} />
           <Stack.Screen name="Group" component={GroupScreen} />
           <Stack.Screen name="AddExpense" component={AddExpenseScreen} />
           <Stack.Screen name="EditExpense" component={EditExpenseScreen} />
@@ -153,12 +148,10 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 15,
-    color: '#6B7280',
     fontWeight: '500',
   },
 });

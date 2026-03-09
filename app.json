@@ -1,18 +1,23 @@
 {
   "expo": {
-    "name": "Evenly - Split Expenses",
-    "slug": "evenly",
-    "scheme": "evenly",
+    "name": "Evynly - Split Expenses",
+    "slug": "evynly",
+    "scheme": "evynly",
     "version": "1.0.0",
     "owner": "akshay643",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F0F23"
+    },
     "newArchEnabled": true,
 
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.evenly.app",
+      "bundleIdentifier": "com.evynly.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSCameraUsageDescription": "Used to scan receipts",
@@ -26,7 +31,7 @@
         "backgroundColor": "#6366F1"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.evenly.app",
+      "package": "com.evynly.app",
       "googleServicesFile": "./google-services.json",
       "versionCode": 1,
       "permissions": [
@@ -54,7 +59,7 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#0F0F23",
-          "image": "./assets/splash-icon.png",
+          "image": "./assets/icon.png",
           "imageWidth": 200
         }
       ],

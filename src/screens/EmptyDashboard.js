@@ -6,11 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 export default function EmptyDashboard({ onCreateGroup }) {
   return (
     <View style={s.container}>
-      <View style={s.iconCircle}>
-        <Text style={{ fontSize: 64 }}>💰</Text>
-      </View>
 
-      <Text style={s.title}>Welcome to Evenly!</Text>
+
       <Text style={s.subtitle}>
         Split expenses effortlessly with friends,{'\n'}
         roommates, and travel buddies.
